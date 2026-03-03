@@ -7,7 +7,7 @@ Hold `fn` (macOS) or `Right Ctrl` (Windows) anywhere → speak → release → t
 ### macOS
 
 ```bash
-curl -fsSL https://tinyurl.com/2a86ls55 | bash
+curl -fsSL https://tinyurl.com/get-samvad | bash
 ```
 
 Then run:
@@ -35,7 +35,7 @@ powershell -c "Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force"
 
 **Step 2** — install Samvad:
 ```
-powershell -c "iwr -useb https://tinyurl.com/282r66ke | iex"
+powershell -c "iwr -useb https://tinyurl.com/samvad-win | iex"
 ```
 
 Open a **new** terminal, then run:
