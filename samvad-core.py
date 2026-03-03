@@ -475,6 +475,9 @@ class Core:
 
         emit({"type": "init", "has_key": bool(self.key)})
 
+        # ── Start reading UI commands immediately (needed during perm phase) ──
+        threading.Thread(target=self._cmd_thread, daemon=True).start()
+
         # ── macOS: wait for permissions ──────────────────────────────────
         if PLATFORM == "Darwin":
             while not (_has_ax() and _has_im()):
@@ -497,7 +500,6 @@ class Core:
         emit({"type": "ready", "lang": self.lang, "mode": self.mode,
               "has_key": bool(self.key), "ptt_key": PTT_KEY_NAME})
 
-        threading.Thread(target=self._cmd_thread, daemon=True).start()
         signal.signal(signal.SIGINT,  lambda *_: self._quit.set())
         signal.signal(signal.SIGTERM, lambda *_: self._quit.set())
         self._quit.wait()

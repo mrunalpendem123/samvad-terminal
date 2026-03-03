@@ -402,9 +402,9 @@ class SamvadApp(App[None]):
         Binding("l",       "cycle_lang",       show=False),
         Binding("m",       "cycle_mode",       show=False),
         Binding("escape",  "back",             show=False),
-        Binding("up",      "settings_up",      show=False),
-        Binding("down",    "settings_down",    show=False),
-        Binding("enter",   "settings_select",  show=False),
+        Binding("up",      "settings_up",      show=False, priority=True),
+        Binding("down",    "settings_down",    show=False, priority=True),
+        Binding("enter",   "settings_select",  show=False, priority=True),
     ]
 
     def __init__(self) -> None:
@@ -998,13 +998,12 @@ class SamvadApp(App[None]):
         elif t == "perm":
             self._perm   = {"im": bool(msg.get("im")), "ax": bool(msg.get("ax"))}
             self._status = "perm"
-            # Auto-advance selector to first ungranged permission
+            # Auto-advance selector to first ungranted permission
             if self._perm["im"] and not self._perm["ax"]:
                 self._perm_sel = 1
             elif not self._perm["im"]:
                 self._perm_sel = 0
-            self._refresh_perm()
-            self._switch("perm-view")
+            self._refresh_ui()
             return
 
         elif t == "ready":
