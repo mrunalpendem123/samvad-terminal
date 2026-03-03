@@ -3,6 +3,12 @@
 
 $ErrorActionPreference = "Stop"
 
+# ── Fix execution policy so uv installer can run ──────────────────────────────
+$policy = Get-ExecutionPolicy -Scope CurrentUser
+if ($policy -notin @("Unrestricted", "RemoteSigned", "Bypass")) {
+    Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+}
+
 $INSTALL_DIR = "$env:USERPROFILE\.samvad"
 $REPO_RAW    = "https://raw.githubusercontent.com/mrunalpendem123/samvad-terminal/main"
 
@@ -28,7 +34,9 @@ Write-Host "-> Writing API key..."
 # ── Ensure uv is installed ────────────────────────────────────────────────────
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Write-Host "-> Installing uv (Python manager)..."
-    irm https://astral.sh/uv/install.ps1 | iex
+    & powershell -ExecutionPolicy Bypass -NoProfile -c "irm https://astral.sh/uv/install.ps1 | iex"
+    # Refresh PATH for this session so uv is found immediately
+    $env:PATH = "$env:USERPROFILE\.local\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"
 }
 
 # ── Add install dir to user PATH (so you can type 'samvad' anywhere) ─────────
