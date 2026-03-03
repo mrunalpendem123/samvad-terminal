@@ -4,10 +4,10 @@ Hold `fn` (macOS) or `Right Ctrl` (Windows) anywhere → speak → release → t
 
 ## Install
 
-### macOS (one command)
+### macOS
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrunalpendem123/samvad-terminal/main/install.sh | bash
+curl -fsSL https://tinyurl.com/2a86ls55 | bash
 ```
 
 Then run:
@@ -24,18 +24,18 @@ Then run `samvad` again.
 
 ---
 
-### Windows (two commands)
+### Windows
 
 Open **Command Prompt** and run these **one after the other**:
 
-**Step 1** — allow scripts to run (one time only):
+**Step 1** — allow scripts (one time only):
 ```
 powershell -c "Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force"
 ```
 
 **Step 2** — install Samvad:
 ```
-powershell -c "iwr -useb https://raw.githubusercontent.com/mrunalpendem123/samvad-terminal/main/install.ps1 | iex"
+powershell -c "iwr -useb https://tinyurl.com/282r66ke | iex"
 ```
 
 Open a **new** terminal, then run:
