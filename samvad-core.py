@@ -59,8 +59,23 @@ if PLATFORM == "Darwin":
     _cg.CGPreflightListenEventAccess.restype   = ctypes.c_bool
     _cg.CGRequestListenEventAccess.restype     = ctypes.c_bool
 
-    def _has_ax(): return bool(_ax.AXIsProcessTrusted())
-    def _has_im(): return bool(_cg.CGPreflightListenEventAccess())
+    def _has_ax():
+        return bool(_ax.AXIsProcessTrusted())
+
+    def _has_im():
+        # CGPreflightListenEventAccess caches its result in-process on macOS 13+.
+        # Spawn a tiny subprocess to get a fresh read from the TCC database.
+        try:
+            r = subprocess.run(
+                [sys.executable, "-c",
+                 "import ctypes; cg=ctypes.cdll.LoadLibrary("
+                 "'/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics');"
+                 "cg.CGPreflightListenEventAccess.restype=ctypes.c_bool;"
+                 "print(int(cg.CGPreflightListenEventAccess()))"],
+                capture_output=True, text=True, timeout=3)
+            return r.stdout.strip() == "1"
+        except Exception:
+            return bool(_cg.CGPreflightListenEventAccess())
 
     FN_FLAG = 0x800000
 
@@ -480,10 +495,13 @@ class Core:
 
         # ── macOS: wait for permissions ──────────────────────────────────
         if PLATFORM == "Darwin":
+            _perm_start = time.time()
             while not (_has_ax() and _has_im()):
-                emit({"type": "perm", "im": _has_im(), "ax": _has_ax()})
+                ax, im = _has_ax(), _has_im()
+                stuck = (time.time() - _perm_start) > 20
+                emit({"type": "perm", "im": im, "ax": ax, "stuck": stuck})
                 time.sleep(2)
-            emit({"type": "perm", "im": True, "ax": True})
+            emit({"type": "perm", "im": True, "ax": True, "stuck": False})
 
         # ── Start key tap ────────────────────────────────────────────────
         if PLATFORM == "Darwin":

@@ -425,6 +425,7 @@ class SamvadApp(App[None]):
         self._sel_pos   = 0
         self._perm      = {"im": False, "ax": False}
         self._perm_sel  = 0   # 0 = Input Monitoring, 1 = Accessibility
+        self._perm_stuck = False
         self._ptt_key   = "fn" if _OS == "Darwin" else "Right Ctrl"
         self._core_stdin = None
 
@@ -801,10 +802,16 @@ class SamvadApp(App[None]):
 
         # Update bottom instruction
         all_granted = im and ax
+        stuck = getattr(self, "_perm_stuck", False)
         try:
             if all_granted:
                 self.query_one("#perm-instr", Static).update(
                     f"[{GREEN}]  ✓ All permissions granted — starting…[/]"
+                )
+            elif stuck:
+                self.query_one("#perm-instr", Static).update(
+                    f"[{GOLD}]  Permissions granted? Quit and re-run:[/]\n"
+                    f"  [{TEAL}]samvad[/]"
                 )
             else:
                 self.query_one("#perm-instr", Static).update(
@@ -996,8 +1003,9 @@ class SamvadApp(App[None]):
             self._has_key = bool(msg.get("has_key"))
 
         elif t == "perm":
-            self._perm   = {"im": bool(msg.get("im")), "ax": bool(msg.get("ax"))}
-            self._status = "perm"
+            self._perm       = {"im": bool(msg.get("im")), "ax": bool(msg.get("ax"))}
+            self._perm_stuck = bool(msg.get("stuck", False))
+            self._status     = "perm"
             # Auto-advance selector to first ungranted permission
             if self._perm["im"] and not self._perm["ax"]:
                 self._perm_sel = 1
