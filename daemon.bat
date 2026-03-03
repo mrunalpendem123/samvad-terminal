@@ -5,14 +5,9 @@ setlocal
 
 set "DIR=%~dp0"
 
-:: ── Load API key from .env ──────────────────────────────────────────────────
+:: ── Load API key from .env (use PowerShell to handle BOM correctly) ──────────
 if exist "%DIR%.env" (
-    for /f "usebackq tokens=1* delims==" %%A in ("%DIR%.env") do (
-        if not "%%A"=="" (
-            set "FIRST=%%A"
-            if not "!FIRST:~0,1!"=="#" set "%%A=%%B"
-        )
-    )
+    for /f "usebackq delims=" %%A in (`powershell -NoProfile -c "([System.IO.File]::ReadAllLines('%DIR%.env') | Where-Object { $_ -match '^SARVAM_API_KEY=' }) -replace '^SARVAM_API_KEY=','' | Select-Object -First 1"`) do set "SARVAM_API_KEY=%%A"
 )
 
 :: ── Ensure uv is installed ─────────────────────────────────────────────────

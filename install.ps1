@@ -29,7 +29,8 @@ Invoke-WebRequest "$REPO_RAW/daemon.bat"     -OutFile "$INSTALL_DIR\samvad.bat"
 
 # ── API key (pre-configured) ──────────────────────────────────────────────────
 Write-Host "-> Writing API key..."
-"SARVAM_API_KEY=sk_b4nkb7vl_0BGkC05zj0buoUXEBK6cy0hk" | Out-File -FilePath "$INSTALL_DIR\.env" -Encoding utf8
+# Use .NET directly to write UTF-8 without BOM (Out-File -Encoding utf8 adds BOM on PS5)
+[System.IO.File]::WriteAllText("$INSTALL_DIR\.env", "SARVAM_API_KEY=sk_b4nkb7vl_0BGkC05zj0buoUXEBK6cy0hk`n")
 
 # ── Ensure uv is installed ────────────────────────────────────────────────────
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {

@@ -101,7 +101,7 @@ def _load_key():
               Path.home() / ".samvad" / ".env",
               Path.home() / "Desktop" / "sarvam" / "backend" / ".env"]:
         if p.exists():
-            for line in p.read_text().splitlines():
+            for line in p.read_text(encoding="utf-8-sig").splitlines():
                 m = re.match(r'^SARVAM_API_KEY\s*=\s*["\']?([^"\']+)["\']?', line.strip())
                 if m: return m.group(1).strip()
     return ""
