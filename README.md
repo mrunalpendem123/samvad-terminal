@@ -24,10 +24,12 @@ Then run `samvad` again.
 
 ---
 
-### Windows (one command — PowerShell)
+### Windows (one command)
 
-```powershell
-iwr -useb https://raw.githubusercontent.com/mrunalpendem123/samvad-terminal/main/install.ps1 | iex
+Open **Command Prompt** or **PowerShell** and paste:
+
+```
+powershell -c "iwr -useb https://raw.githubusercontent.com/mrunalpendem123/samvad-terminal/main/install.ps1 | iex"
 ```
 
 Open a **new** terminal, then run:
