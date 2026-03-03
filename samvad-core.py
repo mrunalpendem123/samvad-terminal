@@ -468,16 +468,19 @@ class Core:
 
         # ── macOS: wait for permissions ──────────────────────────────────
         if PLATFORM == "Darwin":
+            # Trigger Input Monitoring popup
             _cg.CGRequestListenEventAccess()
-            if HAS_OBJC:
-                try:
-                    opts = NSDictionary.dictionaryWithObject_forKey_(
-                        NSNumber.numberWithBool_(True), "AXTrustedCheckOptionPrompt")
-                    _ax.AXIsProcessTrustedWithOptions(ctypes.c_void_p(id(opts)))
-                except Exception:
-                    pass
+            # Open System Settings → Accessibility automatically (no auto-popup on macOS)
+            _ax_settings_opened = False
             while not (_has_ax() and _has_im()):
-                emit({"type": "perm", "im": _has_im(), "ax": _has_ax()})
+                ax, im = _has_ax(), _has_im()
+                if not ax and not _ax_settings_opened:
+                    subprocess.Popen([
+                        "open",
+                        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+                    ])
+                    _ax_settings_opened = True
+                emit({"type": "perm", "im": im, "ax": ax})
                 time.sleep(2)
             emit({"type": "perm", "im": True, "ax": True})
 

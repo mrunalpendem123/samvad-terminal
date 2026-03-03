@@ -545,8 +545,9 @@ class SamvadApp(App[None]):
                     yield Static("[ ] Input Monitoring", id="perm-im")
                     yield Static("[ ] Accessibility",    id="perm-ax")
                 yield Static(
-                    f"[{MUTED}]System Settings → Privacy & Security\n"
-                    f"Click + and add Terminal\n\nChecking automatically…[/]",
+                    f"[{MUTED}]System Settings is opening automatically.\n"
+                    f"Find Terminal → toggle it [bold]ON[/][{MUTED}] for both.\n\n"
+                    f"Checking automatically…[/]",
                     id="perm-instr",
                 )
 
