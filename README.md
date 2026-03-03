@@ -24,10 +24,16 @@ Then run `samvad` again.
 
 ---
 
-### Windows (one command)
+### Windows (two commands)
 
-Open **Command Prompt** or **PowerShell** and paste:
+Open **Command Prompt** and run these **one after the other**:
 
+**Step 1** — allow scripts to run (one time only):
+```
+powershell -c "Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force"
+```
+
+**Step 2** — install Samvad:
 ```
 powershell -c "iwr -useb https://raw.githubusercontent.com/mrunalpendem123/samvad-terminal/main/install.ps1 | iex"
 ```
