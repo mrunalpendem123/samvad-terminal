@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+bun.lock
+uv.lock
+*.zip
+samvad-rs/
+samvad-daemon.py
+samvad.py
+samvad-ui.ts
+run.sh
+pyproject.toml
+package.json
+.DS_Store
