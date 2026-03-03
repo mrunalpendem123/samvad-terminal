@@ -14,8 +14,10 @@ Run:
   uv run --with "textual>=0.70" --with "textual-plotext" python samvad-ui.py
 """
 from __future__ import annotations
-import asyncio, json, math, time
+import asyncio, json, math, platform, time
 from pathlib import Path
+
+_OS = platform.system()   # "Darwin" | "Windows"
 
 from rich.markup import escape
 from textual.app import App, ComposeResult
@@ -422,6 +424,7 @@ class SamvadApp(App[None]):
         self._t         = 0.0      # time counter for animations
         self._sel_pos   = 0
         self._perm      = {"im": False, "ax": False}
+        self._ptt_key   = "fn" if _OS == "Darwin" else "Right Ctrl"
         self._core_stdin = None
 
     # ── Helpers ────────────────────────────────────────────────────────────────
@@ -432,6 +435,25 @@ class SamvadApp(App[None]):
     def _mode_label(self, code: str = "") -> str:
         code = code or self._mode
         return next((l for c, l in MODES if c == code), code)
+
+    def _update_ptt_instructions(self) -> None:
+        """Refresh every instruction label with the correct PTT key name."""
+        k = self._ptt_key
+        try:
+            self.query_one("#idle-instr", Static).update(
+                f"Hold [{TEAL}]\\[{k}][/] anywhere to speak  ·  release to paste"
+            )
+            self.query_one("#rec-instr", Static).update(
+                f"Release [{TEAL}]\\[{k}][/] to transcribe and paste"
+            )
+            self.query_one("#done-hint", Static).update(
+                f"[{DIM}]Hold \\[{k}] to record again  ·  \\[Esc] to dismiss[/]"
+            )
+            self.query_one("#err-hint", Static).update(
+                f"[{MUTED}]Hold \\[{k}] to try again[/]"
+            )
+        except Exception:
+            pass
 
     def _send(self, msg: dict) -> None:
         if self._core_stdin:
@@ -469,7 +491,7 @@ class SamvadApp(App[None]):
                 with Container(id="idle-panel"):
                     yield Static("", id="idle-info")
                 yield Static(
-                    f"Hold [{TEAL}]\\[fn][/] anywhere to speak  ·  release to paste",
+                    f"Hold [{TEAL}]\\[{self._ptt_key}][/] anywhere to speak  ·  release to paste",
                     id="idle-instr",
                 )
 
@@ -482,7 +504,7 @@ class SamvadApp(App[None]):
                     yield Static("⠋", id="rec-spin")
                 yield WaveformWidget(id="waveform")
                 yield Static(
-                    f"Release [{TEAL}]\\[fn][/] to transcribe and paste",
+                    f"Release [{TEAL}]\\[{self._ptt_key}][/] to transcribe and paste",
                     id="rec-instr",
                 )
 
@@ -501,7 +523,7 @@ class SamvadApp(App[None]):
                     yield Static("", id="done-text")
                     yield Static("", id="done-meta")
                 yield Static(
-                    f"[{DIM}]Hold \\[fn] to record again  ·  \\[Esc] to dismiss[/]",
+                    f"[{DIM}]Hold \\[{self._ptt_key}] to record again  ·  \\[Esc] to dismiss[/]",
                     id="done-hint",
                 )
 
@@ -511,7 +533,7 @@ class SamvadApp(App[None]):
                     yield Static("✗  Error", id="err-title")
                     yield Static("", id="err-msg")
                 yield Static(
-                    f"[{MUTED}]Hold \\[fn] to try again[/]",
+                    f"[{MUTED}]Hold \\[{self._ptt_key}] to try again[/]",
                     id="err-hint",
                 )
 
@@ -890,14 +912,25 @@ class SamvadApp(App[None]):
     # ── Core subprocess ───────────────────────────────────────────────────────
     async def _run_core(self) -> None:
         dir_ = Path(__file__).parent
-        proc = await asyncio.create_subprocess_exec(
+        args = [
             "uv", "run", "--python", "3.11", "--no-project",
             "--with", "sounddevice>=0.4",
             "--with", "numpy>=1.26",
             "--with", "requests>=2.28",
-            "--with", "pyobjc-framework-Cocoa>=10",
-            "--with", "pyobjc-framework-Quartz>=10",
-            "python", str(dir_ / "samvad-core.py"),
+        ]
+        if _OS == "Darwin":
+            args += [
+                "--with", "pyobjc-framework-Cocoa>=10",
+                "--with", "pyobjc-framework-Quartz>=10",
+            ]
+        elif _OS == "Windows":
+            args += [
+                "--with", "pynput>=1.7",
+                "--with", "pyperclip>=1.8",
+            ]
+        args += ["python", str(dir_ / "samvad-core.py")]
+        proc = await asyncio.create_subprocess_exec(
+            *args,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=None,
@@ -933,6 +966,8 @@ class SamvadApp(App[None]):
             self._lang    = msg.get("lang", self._lang)
             self._mode    = msg.get("mode", self._mode)
             self._has_key = bool(msg.get("has_key"))
+            self._ptt_key = msg.get("ptt_key", self._ptt_key)
+            self._update_ptt_instructions()
 
         elif t == "status":
             self._status = msg.get("status", self._status)

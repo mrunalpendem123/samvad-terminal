@@ -1,8 +1,10 @@
-# Samvad — Voice to Text for macOS
+# Samvad — Voice to Text for macOS & Windows
 
-Hold `fn` anywhere → speak → release → text pastes at your cursor.
+Hold `fn` (macOS) or `Right Ctrl` (Windows) anywhere → speak → release → text pastes at your cursor.
 
-## Install (one command)
+## Install
+
+### macOS (one command)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mrunalpendem123/samvad-terminal/main/install.sh | bash
@@ -14,20 +16,36 @@ Then run:
 samvad
 ```
 
-## First Run
-
-macOS will ask for permissions — go to **System Settings → Privacy & Security** and enable Terminal for:
+**First run:** macOS will ask for permissions — go to **System Settings → Privacy & Security** and enable Terminal for:
 - **Accessibility**
 - **Input Monitoring**
 
 Then run `samvad` again.
 
+---
+
+### Windows (one command — PowerShell)
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/mrunalpendem123/samvad-terminal/main/install.ps1 | iex
+```
+
+Open a **new** terminal, then run:
+
+```
+samvad
+```
+
+**First run:** Windows may ask for input-monitoring permissions — allow when prompted.
+
+---
+
 ## Controls
 
 | Key | Action |
 |-----|--------|
-| Hold `fn` | Start recording |
-| Release `fn` | Transcribe & paste |
+| Hold `fn` / `Right Ctrl` | Start recording |
+| Release | Transcribe & paste |
 | `S` | Settings (language / mode) |
 | `H` | History |
 | `L` | Cycle language |
@@ -47,5 +65,5 @@ English, Hindi, Hinglish→English, Tamil, Telugu, Malayalam, Kannada, Marathi, 
 
 ## Requirements
 
-- macOS only
+- macOS or Windows
 - Internet connection (for transcription via Sarvam AI)

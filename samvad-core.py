@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
 """
-samvad-core — Python backend. No UI.
-Communicates with samvad-ui.ts via JSON lines on stdio.
-stdin  ← commands from UI  (set_lang, set_mode, quit)
-stdout → status messages to UI
+samvad-core — cross-platform backend (macOS + Windows)
+PTT key: fn (macOS) | Right Ctrl (Windows)
+Communicates with samvad-ui.py via JSON lines on stdio.
 """
 from __future__ import annotations
-import ctypes, fcntl, io, json, os, re, signal, subprocess, sys
+import atexit, io, json, os, platform, re, signal, subprocess, sys
 import threading, time, wave
 from datetime import datetime
 from pathlib import Path
 
-# System-wide lock files (prevent multiple instances / cross-process double-paste)
-_INSTANCE_LOCK = Path("/tmp/.samvad_instance.lock")
-_PASTE_LOCK    = Path("/tmp/.samvad_paste.lock")
-
 import requests
 
+PLATFORM = platform.system()   # "Darwin" | "Windows"
+
+# ── Cross-platform lock files ──────────────────────────────────────────────────
+if PLATFORM == "Windows":
+    _TMP = Path(os.environ.get("TEMP", "C:\\Temp"))
+else:
+    _TMP = Path("/tmp")
+_INSTANCE_LOCK = _TMP / ".samvad_instance.lock"
+_PASTE_LOCK    = _TMP / ".samvad_paste.lock"
+
+# ── Audio ──────────────────────────────────────────────────────────────────────
 try:
     import sounddevice as sd
     import numpy as np
@@ -24,35 +30,51 @@ try:
 except ImportError:
     HAS_AUDIO = False
 
-try:
-    import AppKit  # noqa: F401
-    from Foundation import NSRunLoop, NSDate, NSDictionary, NSNumber
-    from Quartz import (
-        CGEventTapCreate, kCGSessionEventTap, kCGHeadInsertEventTap,
-        kCGEventTapOptionDefault, CGEventMaskBit, kCGEventFlagsChanged,
-        CGEventGetFlags, CFMachPortCreateRunLoopSource,
-        CFRunLoopAddSource, CFRunLoopGetCurrent,
-        kCFRunLoopDefaultMode, CGEventTapEnable,
-    )
-    HAS_OBJC = True
-except ImportError:
-    HAS_OBJC = False
+# ── macOS-specific ─────────────────────────────────────────────────────────────
+HAS_OBJC = False
+_ax = _cg = None
+if PLATFORM == "Darwin":
+    import ctypes
+    try:
+        import AppKit  # noqa: F401
+        from Foundation import NSRunLoop, NSDate, NSDictionary, NSNumber
+        from Quartz import (
+            CGEventTapCreate, kCGSessionEventTap, kCGHeadInsertEventTap,
+            kCGEventTapOptionDefault, CGEventMaskBit, kCGEventFlagsChanged,
+            CGEventGetFlags, CFMachPortCreateRunLoopSource,
+            CFRunLoopAddSource, CFRunLoopGetCurrent,
+            kCFRunLoopDefaultMode, CGEventTapEnable,
+        )
+        HAS_OBJC = True
+    except ImportError:
+        pass
 
-# ── macOS permissions ──────────────────────────────────────────────────────────
-_ax = ctypes.cdll.LoadLibrary(
-    "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
-_cg = ctypes.cdll.LoadLibrary(
-    "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
-_ax.AXIsProcessTrusted.restype             = ctypes.c_bool
-_ax.AXIsProcessTrustedWithOptions.restype  = ctypes.c_bool
-_ax.AXIsProcessTrustedWithOptions.argtypes = [ctypes.c_void_p]
-_cg.CGPreflightListenEventAccess.restype   = ctypes.c_bool
-_cg.CGRequestListenEventAccess.restype     = ctypes.c_bool
+    _ax = ctypes.cdll.LoadLibrary(
+        "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+    _cg = ctypes.cdll.LoadLibrary(
+        "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+    _ax.AXIsProcessTrusted.restype             = ctypes.c_bool
+    _ax.AXIsProcessTrustedWithOptions.restype  = ctypes.c_bool
+    _ax.AXIsProcessTrustedWithOptions.argtypes = [ctypes.c_void_p]
+    _cg.CGPreflightListenEventAccess.restype   = ctypes.c_bool
+    _cg.CGRequestListenEventAccess.restype     = ctypes.c_bool
 
-def _has_ax(): return bool(_ax.AXIsProcessTrusted())
-def _has_im(): return bool(_cg.CGPreflightListenEventAccess())
+    def _has_ax(): return bool(_ax.AXIsProcessTrusted())
+    def _has_im(): return bool(_cg.CGPreflightListenEventAccess())
 
-FN_FLAG = 0x800000
+    FN_FLAG = 0x800000
+
+# ── Windows-specific ───────────────────────────────────────────────────────────
+HAS_PYNPUT = False
+if PLATFORM == "Windows":
+    try:
+        from pynput import keyboard as _pynput_kb
+        import pyperclip
+        HAS_PYNPUT = True
+    except ImportError:
+        pass
+
+PTT_KEY_NAME = "fn" if PLATFORM == "Darwin" else "Right Ctrl"
 
 # ── Language/mode ──────────────────────────────────────────────────────────────
 LANGUAGES = [
@@ -76,6 +98,7 @@ def _load_key():
     k = os.environ.get("SARVAM_API_KEY", "")
     if k: return k
     for p in [Path(__file__).parent / ".env",
+              Path.home() / ".samvad" / ".env",
               Path.home() / "Desktop" / "sarvam" / "backend" / ".env"]:
         if p.exists():
             for line in p.read_text().splitlines():
@@ -91,20 +114,83 @@ def emit(msg: dict):
     except Exception:
         pass
 
+# ── Cross-platform instance lock ───────────────────────────────────────────────
+def _acquire_instance_lock() -> bool:
+    """Returns True if we got the lock, False if another instance is running."""
+    if _INSTANCE_LOCK.exists():
+        try:
+            pid = int(_INSTANCE_LOCK.read_text().strip())
+            # Check if that PID is still alive
+            if PLATFORM == "Windows":
+                import ctypes as _ct
+                SYNCHRONIZE = 0x00100000
+                h = _ct.windll.kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+                if h:
+                    _ct.windll.kernel32.CloseHandle(h)
+                    return False   # still running
+            else:
+                os.kill(pid, 0)
+                return False       # still running
+        except (ValueError, OSError):
+            pass   # stale lock — process is gone
+    _INSTANCE_LOCK.write_text(str(os.getpid()))
+    atexit.register(lambda: _INSTANCE_LOCK.unlink(missing_ok=True))
+    return True
+
+# ── Cross-platform paste lock ──────────────────────────────────────────────────
+_paste_mutex = threading.Lock()   # in-process guard
+_PASTE_COOLDOWN = 1.5             # seconds between pastes
+_last_paste_time = 0.0
+
+def _do_paste(text: str) -> bool:
+    """Paste text at cursor. Returns False if blocked by cooldown/lock."""
+    global _last_paste_time
+    if not _paste_mutex.acquire(blocking=False):
+        return False
+    try:
+        now = time.time()
+        if now - _last_paste_time < _PASTE_COOLDOWN:
+            return False
+
+        if PLATFORM == "Darwin":
+            # macOS: pbcopy + osascript Cmd+V
+            subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True)
+            time.sleep(0.08)
+            subprocess.run(["osascript", "-e",
+                'tell application "System Events" to keystroke "v" using command down'],
+                check=True)
+        elif PLATFORM == "Windows":
+            # Windows: pyperclip + pynput Ctrl+V
+            import pyperclip
+            from pynput.keyboard import Controller as _KBC, Key as _Key
+            pyperclip.copy(text)
+            time.sleep(0.08)
+            kb = _KBC()
+            kb.press(_Key.ctrl)
+            kb.press('v')
+            kb.release('v')
+            kb.release(_Key.ctrl)
+
+        _last_paste_time = time.time()
+        time.sleep(0.5)   # brief hold before releasing mutex
+        return True
+    finally:
+        _paste_mutex.release()
+
 
 # ── Core ───────────────────────────────────────────────────────────────────────
 class Core:
     def __init__(self):
-        self.key      = _load_key()
-        self.lang     = "en-IN"
-        self.mode     = "direct"
-        self._quit    = threading.Event()
-        self._stop    = threading.Event()
-        self._frames  : list = []
-        self._lock    = threading.Lock()
-        self._tx_lock = threading.Lock()   # prevents concurrent transcription/paste
-        self._fn_down = False
-        self._fn_release_time = 0.0        # debounce: time of last fn release
+        self.key       = _load_key()
+        self.lang      = "en-IN"
+        self.mode      = "direct"
+        self._quit     = threading.Event()
+        self._stop     = threading.Event()
+        self._frames: list = []
+        self._lock     = threading.Lock()
+        self._tx_lock  = threading.Lock()
+        self._fn_down  = False
+        self._fn_release_time = 0.0
         self._tap_ready = threading.Event()
         self._tap_ok    = False
         self._recording = False
@@ -112,7 +198,7 @@ class Core:
     def _lang_name(self):
         return LANG_MAP.get(self.lang, (self.lang, self.lang))[1]
 
-    # ── WAV helper ────────────────────────────────────────────────────
+    # ── WAV helper ──────────────────────────────────────────────────────
     def _wav(self, pcm: bytes) -> bytes:
         b = io.BytesIO()
         with wave.open(b, "wb") as wf:
@@ -120,7 +206,7 @@ class Core:
             wf.setframerate(16000); wf.writeframes(pcm)
         return b.getvalue()
 
-    # ── ASR ───────────────────────────────────────────────────────────
+    # ── ASR ─────────────────────────────────────────────────────────────
     def _asr(self, pcm: bytes, lang_code: str) -> str:
         MAX, OVL = 16000 * 29 * 2, 16000 * 2 // 4
         def chunk(p: bytes) -> str:
@@ -143,7 +229,7 @@ class Core:
             s = max(e - OVL, s + 1)
         return " ".join(parts)
 
-    # ── Translate ─────────────────────────────────────────────────────
+    # ── Translate ────────────────────────────────────────────────────────
     def _translate(self, text: str, src_lang: str) -> str:
         try:
             r = requests.post(
@@ -180,7 +266,7 @@ class Core:
             pass
         return text
 
-    # ── Polish ────────────────────────────────────────────────────────
+    # ── Polish ───────────────────────────────────────────────────────────
     def _polish(self, text: str) -> str:
         prompt = ("Clean up this voice transcription. Fix punctuation, "
                   "capitalisation, remove filler words. Return only:\n\n" + text)
@@ -203,7 +289,7 @@ class Core:
             pass
         return text
 
-    # ── Recording ─────────────────────────────────────────────────────
+    # ── Recording ────────────────────────────────────────────────────────
     def _rec_thread(self):
         self._frames = []
         def cb(indata, *_):
@@ -235,20 +321,17 @@ class Core:
         emit({"type": "status", "status": "transcribing"})
         threading.Thread(target=self._tx_thread, daemon=True).start()
 
-    # ── Transcription + paste ─────────────────────────────────────────
+    # ── Transcription + paste ─────────────────────────────────────────────
     def _tx_thread(self):
-        # Only one transcription/paste may run at a time
         if not self._tx_lock.acquire(blocking=False):
             return
         try:
-            # Snapshot frames immediately and clear so a racing thread gets nothing
             frames, self._frames = self._frames, []
             if not frames:
                 emit({"type": "status", "status": "idle"}); return
 
-            # Discard recordings shorter than 300 ms (keyboard bounce / accidental tap)
-            duration_s = len(frames) * 1024 / 16000
-            if duration_s < 0.3:
+            # Discard recordings < 300 ms (key bounce)
+            if len(frames) * 1024 / 16000 < 0.3:
                 emit({"type": "status", "status": "idle"}); return
 
             audio = np.concatenate(frames)
@@ -268,24 +351,8 @@ class Core:
                 emit({"type": "status", "status": "polishing"})
                 text = self._polish(text)
 
-            # Cross-process paste lock — if another samvad instance is already
-            # pasting, skip this paste entirely to prevent double-paste.
-            paste_fd = open(_PASTE_LOCK, "w")
-            try:
-                fcntl.flock(paste_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError:
-                paste_fd.close()
+            if not _do_paste(text):
                 emit({"type": "status", "status": "idle"}); return
-            try:
-                subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True)
-                time.sleep(0.08)
-                subprocess.run(["osascript", "-e",
-                    'tell application "System Events" to keystroke "v" using command down'],
-                    check=True)
-                time.sleep(1.0)   # hold lock 1 s so a second instance can't sneak in
-            finally:
-                fcntl.flock(paste_fd, fcntl.LOCK_UN)
-                paste_fd.close()
 
             emit({
                 "type": "done",
@@ -299,21 +366,20 @@ class Core:
         finally:
             self._tx_lock.release()
 
-    # ── CGEventTap (fn key) ───────────────────────────────────────────
-    def _tap_thread(self):
+    # ── macOS: CGEventTap (fn key) ────────────────────────────────────────
+    def _tap_thread_macos(self):
         def cb(proxy, etype, event, refcon):
             try:
                 if etype == kCGEventFlagsChanged:
                     fn  = bool(CGEventGetFlags(event) & FN_FLAG)
                     now = time.time()
                     if fn and not self._fn_down:
-                        # Debounce: ignore re-press within 300 ms of last release
                         if now - self._fn_release_time < 0.3:
                             return event
                         self._fn_down = True
                         threading.Thread(target=self._start_rec, daemon=True).start()
                     elif not fn and self._fn_down:
-                        self._fn_down        = False
+                        self._fn_down         = False
                         self._fn_release_time = now
                         threading.Thread(target=self._stop_rec, daemon=True).start()
             except Exception:
@@ -335,7 +401,38 @@ class Core:
             NSRunLoop.currentRunLoop().runUntilDate_(
                 NSDate.dateWithTimeIntervalSinceNow_(0.1))
 
-    # ── stdin command reader ──────────────────────────────────────────
+    # ── Windows: pynput (Right Ctrl key) ──────────────────────────────────
+    def _tap_thread_windows(self):
+        PTT = _pynput_kb.Key.ctrl_r
+
+        def on_press(key):
+            try:
+                if key == PTT and not self._fn_down:
+                    now = time.time()
+                    if now - self._fn_release_time < 0.3:
+                        return
+                    self._fn_down = True
+                    threading.Thread(target=self._start_rec, daemon=True).start()
+            except Exception:
+                pass
+
+        def on_release(key):
+            try:
+                if key == PTT and self._fn_down:
+                    self._fn_down         = False
+                    self._fn_release_time = time.time()
+                    threading.Thread(target=self._stop_rec, daemon=True).start()
+            except Exception:
+                pass
+
+        self._tap_ok = True
+        self._tap_ready.set()
+        with _pynput_kb.Listener(on_press=on_press, on_release=on_release) as lst:
+            while not self._quit.is_set():
+                time.sleep(0.1)
+            lst.stop()
+
+    # ── stdin command reader ───────────────────────────────────────────────
     def _cmd_thread(self):
         for line in sys.stdin:
             line = line.strip()
@@ -351,52 +448,55 @@ class Core:
             except Exception:
                 pass
 
-    # ── Main ──────────────────────────────────────────────────────────
+    # ── Main ──────────────────────────────────────────────────────────────
     def run(self):
         if not HAS_AUDIO:
             emit({"type": "error", "msg": "sounddevice not installed"}); return
-        if not HAS_OBJC:
+
+        if PLATFORM == "Darwin" and not HAS_OBJC:
             emit({"type": "error", "msg": "pyobjc not installed"}); return
 
-        # Prevent multiple instances — grab exclusive lock on instance file
-        self._instance_fd = open(_INSTANCE_LOCK, "w")
-        try:
-            fcntl.flock(self._instance_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
+        if PLATFORM == "Windows" and not HAS_PYNPUT:
+            emit({"type": "error", "msg": "pynput / pyperclip not installed"}); return
+
+        # Instance lock — prevent double-paste from two running daemons
+        if not _acquire_instance_lock():
             emit({"type": "error",
-                  "msg": "Another Samvad is already running — quit it first (Ctrl+C)."})
-            return
+                  "msg": "Another Samvad is already running — quit it first."}); return
 
         emit({"type": "init", "has_key": bool(self.key)})
 
-        # Permission loop
-        _cg.CGRequestListenEventAccess()
-        if HAS_OBJC:
-            try:
-                opts = NSDictionary.dictionaryWithObject_forKey_(
-                    NSNumber.numberWithBool_(True), "AXTrustedCheckOptionPrompt")
-                _ax.AXIsProcessTrustedWithOptions(ctypes.c_void_p(id(opts)))
-            except Exception:
-                pass
+        # ── macOS: wait for permissions ──────────────────────────────────
+        if PLATFORM == "Darwin":
+            _cg.CGRequestListenEventAccess()
+            if HAS_OBJC:
+                try:
+                    opts = NSDictionary.dictionaryWithObject_forKey_(
+                        NSNumber.numberWithBool_(True), "AXTrustedCheckOptionPrompt")
+                    _ax.AXIsProcessTrustedWithOptions(ctypes.c_void_p(id(opts)))
+                except Exception:
+                    pass
+            while not (_has_ax() and _has_im()):
+                emit({"type": "perm", "im": _has_im(), "ax": _has_ax()})
+                time.sleep(2)
+            emit({"type": "perm", "im": True, "ax": True})
 
-        while not (_has_ax() and _has_im()):
-            emit({"type": "perm", "im": _has_im(), "ax": _has_ax()})
-            time.sleep(2)
+        # ── Start key tap ────────────────────────────────────────────────
+        if PLATFORM == "Darwin":
+            threading.Thread(target=self._tap_thread_macos, daemon=True).start()
+        else:
+            threading.Thread(target=self._tap_thread_windows, daemon=True).start()
 
-        emit({"type": "perm", "im": True, "ax": True})
-
-        # Start CGEventTap
-        threading.Thread(target=self._tap_thread, daemon=True).start()
         self._tap_ready.wait(timeout=5.0)
         if not self._tap_ok:
-            emit({"type": "error", "msg": "CGEventTap failed — grant Accessibility in System Settings"})
+            emit({"type": "error",
+                  "msg": "Key listener failed — run as administrator (Windows) or grant Accessibility (macOS)."})
             return
 
-        emit({"type": "ready", "lang": self.lang, "mode": self.mode, "has_key": bool(self.key)})
+        emit({"type": "ready", "lang": self.lang, "mode": self.mode,
+              "has_key": bool(self.key), "ptt_key": PTT_KEY_NAME})
 
-        # stdin reader
         threading.Thread(target=self._cmd_thread, daemon=True).start()
-
         signal.signal(signal.SIGINT,  lambda *_: self._quit.set())
         signal.signal(signal.SIGTERM, lambda *_: self._quit.set())
         self._quit.wait()
