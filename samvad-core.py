@@ -445,6 +445,15 @@ class Core:
                     self.mode = cmd.get("mode", self.mode)
                 elif cmd.get("cmd") == "quit":
                     self._quit.set()
+                elif cmd.get("cmd") == "request_perm":
+                    perm = cmd.get("perm", "")
+                    if perm == "im" and PLATFORM == "Darwin":
+                        _cg.CGRequestListenEventAccess()
+                    elif perm == "ax" and PLATFORM == "Darwin":
+                        subprocess.Popen([
+                            "open",
+                            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+                        ])
             except Exception:
                 pass
 
@@ -468,19 +477,8 @@ class Core:
 
         # ── macOS: wait for permissions ──────────────────────────────────
         if PLATFORM == "Darwin":
-            # Trigger Input Monitoring popup
-            _cg.CGRequestListenEventAccess()
-            # Open System Settings → Accessibility automatically (no auto-popup on macOS)
-            _ax_settings_opened = False
             while not (_has_ax() and _has_im()):
-                ax, im = _has_ax(), _has_im()
-                if not ax and not _ax_settings_opened:
-                    subprocess.Popen([
-                        "open",
-                        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-                    ])
-                    _ax_settings_opened = True
-                emit({"type": "perm", "im": im, "ax": ax})
+                emit({"type": "perm", "im": _has_im(), "ax": _has_ax()})
                 time.sleep(2)
             emit({"type": "perm", "im": True, "ax": True})
 

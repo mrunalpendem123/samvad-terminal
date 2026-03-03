@@ -335,7 +335,7 @@ WaveformWidget {{
 #perm-panel {{
     border: round {GOLD};
     padding: 1 3;
-    width: 54;
+    width: 60;
     max-width: 95%;
     height: auto;
 }}
@@ -424,6 +424,7 @@ class SamvadApp(App[None]):
         self._t         = 0.0      # time counter for animations
         self._sel_pos   = 0
         self._perm      = {"im": False, "ax": False}
+        self._perm_sel  = 0   # 0 = Input Monitoring, 1 = Accessibility
         self._ptt_key   = "fn" if _OS == "Darwin" else "Right Ctrl"
         self._core_stdin = None
 
@@ -542,14 +543,13 @@ class SamvadApp(App[None]):
                 with Container(id="perm-panel"):
                     yield Static("⚙  Permission Setup", id="perm-title")
                     yield Static(f"[{DIM}]{'─' * 36}[/]", id="perm-sep")
-                    yield Static("[ ] Input Monitoring", id="perm-im")
-                    yield Static("[ ] Accessibility",    id="perm-ax")
-                yield Static(
-                    f"[{MUTED}]System Settings is opening automatically.\n"
-                    f"Find Terminal → toggle it [bold]ON[/][{MUTED}] for both.\n\n"
-                    f"Checking automatically…[/]",
-                    id="perm-instr",
-                )
+                    yield Static("", id="perm-im")
+                    yield Static("", id="perm-ax")
+                    yield Static(
+                        f"\n  [{DIM}]↑↓ select  ·  Enter = open grant dialog[/]",
+                        id="perm-keys",
+                    )
+                yield Static("", id="perm-instr")
 
             # ── Settings ──────────────────────────────────────────────────
             with Container(id="settings-view"):
@@ -687,7 +687,9 @@ class SamvadApp(App[None]):
 
         # Footer
         try:
-            if view == "settings":
+            if status == "perm":
+                txt = f"[{DIM}]↑↓ Select permission   Enter Grant   Ctrl+C Quit[/]"
+            elif view == "settings":
                 txt = f"[{DIM}]↑↓ Navigate   Enter Select   Esc Close[/]"
             elif view == "history":
                 txt = f"[{DIM}]\\[Esc] or \\[H] Close[/]"
@@ -780,15 +782,34 @@ class SamvadApp(App[None]):
 
     def _refresh_perm(self) -> None:
         im, ax = self._perm["im"], self._perm["ax"]
+        perms = [
+            ("perm-im", im, "Input Monitoring"),
+            ("perm-ax", ax, "Accessibility"),
+        ]
+        for i, (wid, granted, label) in enumerate(perms):
+            is_sel = (i == self._perm_sel)
+            if granted:
+                line = f"  [{GREEN}]  [✓] {label}[/]"
+            elif is_sel:
+                line = f"  [bold {TEAL}]▶ [ ] {label}[/]  [{DIM}]← press Enter[/]"
+            else:
+                line = f"  [{MUTED}]  [ ] {label}[/]"
+            try:
+                self.query_one(f"#{wid}", Static).update(line)
+            except Exception:
+                pass
+
+        # Update bottom instruction
+        all_granted = im and ax
         try:
-            self.query_one("#perm-im", Static).update(
-                f"[{GREEN}]  [✓] Input Monitoring[/]" if im
-                else f"[{RED}]  [ ] Input Monitoring[/]"
-            )
-            self.query_one("#perm-ax", Static).update(
-                f"[{GREEN}]  [✓] Accessibility[/]" if ax
-                else f"[{RED}]  [ ] Accessibility[/]"
-            )
+            if all_granted:
+                self.query_one("#perm-instr", Static).update(
+                    f"[{GREEN}]  ✓ All permissions granted — starting…[/]"
+                )
+            else:
+                self.query_one("#perm-instr", Static).update(
+                    f"[{DIM}]  Checking automatically…[/]"
+                )
         except Exception:
             pass
 
@@ -884,19 +905,38 @@ class SamvadApp(App[None]):
             self._status = "idle"
             self._refresh_ui()
 
+    def _request_perm(self) -> None:
+        """Press Enter on a permission row → trigger its system dialog."""
+        perm_keys = ["im", "ax"]
+        key = perm_keys[self._perm_sel]
+        if self._perm.get(key):
+            return  # already granted, skip
+        self._send({"cmd": "request_perm", "perm": key})
+
     def action_settings_up(self) -> None:
+        if self._status == "perm":
+            self._perm_sel = max(0, self._perm_sel - 1)
+            self._refresh_perm()
+            return
         if self._view != "settings":
             return
         self._sel_pos = max(0, self._sel_pos - 1)
         self._refresh_settings()
 
     def action_settings_down(self) -> None:
+        if self._status == "perm":
+            self._perm_sel = min(1, self._perm_sel + 1)
+            self._refresh_perm()
+            return
         if self._view != "settings":
             return
         self._sel_pos = min(len(_SEL_IDX) - 1, self._sel_pos + 1)
         self._refresh_settings()
 
     def action_settings_select(self) -> None:
+        if self._status == "perm":
+            self._request_perm()
+            return
         if self._view != "settings":
             return
         typ, code, _ = _SETTINGS[_SEL_IDX[self._sel_pos]]
@@ -958,6 +998,11 @@ class SamvadApp(App[None]):
         elif t == "perm":
             self._perm   = {"im": bool(msg.get("im")), "ax": bool(msg.get("ax"))}
             self._status = "perm"
+            # Auto-advance selector to first ungranged permission
+            if self._perm["im"] and not self._perm["ax"]:
+                self._perm_sel = 1
+            elif not self._perm["im"]:
+                self._perm_sel = 0
             self._refresh_perm()
             self._switch("perm-view")
             return
