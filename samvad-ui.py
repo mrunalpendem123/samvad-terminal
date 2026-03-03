@@ -143,7 +143,7 @@ ContentSwitcher {{ height: 1fr; }}
 ContentSwitcher > * {{ height: 1fr; }}
 
 /* ── Footer ── */
-#footer {{ height: 1; background: {BG2}; color: {DIM}; padding: 0 2; }}
+#footer {{ height: 1; background: {BG2}; color: {MUTED}; padding: 0 2; }}
 
 /* ═══════════════ IDLE ═══════════════ */
 #idle-view {{
@@ -563,7 +563,7 @@ class SamvadApp(App[None]):
                 yield Static("", id="history-list")
 
         yield Static(
-            "\\[S] Settings  \\[H] History  \\[L] Language  \\[M] Mode  \\[Ctrl+C] Quit",
+            f"[{TEAL}]\\[S][/] Settings  [{TEAL}]\\[H][/] History  [{TEAL}]\\[L][/] Language  [{TEAL}]\\[M][/] Mode  [{TEAL}]\\[Ctrl+C][/] Quit",
             id="footer",
         )
 
@@ -689,13 +689,13 @@ class SamvadApp(App[None]):
         # Footer
         try:
             if status == "perm":
-                txt = f"[{DIM}]↑↓ Select permission   Enter Grant   Ctrl+C Quit[/]"
+                txt = f"[{TEAL}]↑↓[/] Select permission   [{TEAL}]Enter[/] Grant   [{TEAL}]Ctrl+C[/] Quit"
             elif view == "settings":
-                txt = f"[{DIM}]↑↓ Navigate   Enter Select   Esc Close[/]"
+                txt = f"[{TEAL}]↑↓[/] Navigate   [{TEAL}]Enter[/] Select   [{TEAL}]Esc[/] Close"
             elif view == "history":
-                txt = f"[{DIM}]\\[Esc] or \\[H] Close[/]"
+                txt = f"[{TEAL}]\\[Esc][/] or [{TEAL}]\\[H][/] Close"
             else:
-                txt = "\\[S] Settings  \\[H] History  \\[L] Language  \\[M] Mode  \\[Ctrl+C] Quit"
+                txt = f"[{TEAL}]\\[S][/] Settings  [{TEAL}]\\[H][/] History  [{TEAL}]\\[L][/] Language  [{TEAL}]\\[M][/] Mode  [{TEAL}]\\[Ctrl+C][/] Quit"
             self.query_one("#footer", Static).update(txt)
         except Exception:
             pass
