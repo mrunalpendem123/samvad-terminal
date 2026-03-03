@@ -463,6 +463,10 @@ class Core:
                 elif cmd.get("cmd") == "request_perm":
                     perm = cmd.get("perm", "")
                     if perm == "im" and PLATFORM == "Darwin":
+                        subprocess.Popen([
+                            "open",
+                            "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+                        ])
                         _cg.CGRequestListenEventAccess()
                     elif perm == "ax" and PLATFORM == "Darwin":
                         subprocess.Popen([

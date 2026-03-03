@@ -913,11 +913,9 @@ class SamvadApp(App[None]):
             self._refresh_ui()
 
     def _request_perm(self) -> None:
-        """Press Enter on a permission row → trigger its system dialog."""
+        """Press Enter on a permission row → open its system settings pane."""
         perm_keys = ["im", "ax"]
         key = perm_keys[self._perm_sel]
-        if self._perm.get(key):
-            return  # already granted, skip
         self._send({"cmd": "request_perm", "perm": key})
 
     def action_settings_up(self) -> None:
