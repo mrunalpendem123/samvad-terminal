@@ -229,6 +229,7 @@ class Core:
         self._tap_ok    = False
         self._recording = False
         self.ptt_key    = "fn" if PLATFORM == "Darwin" else "right_ctrl"
+        self._capture_mode = False
 
     def _lang_name(self):
         return LANG_MAP.get(self.lang, (self.lang, self.lang))[1]
@@ -403,12 +404,27 @@ class Core:
 
     # ── macOS: CGEventTap (fn key) ────────────────────────────────────────
     def _tap_thread_macos(self):
-        ptt_flag = PTT_KEYS_MAC.get(self.ptt_key, FN_FLAG)
+        def _get_ptt_flag():
+            return PTT_KEYS_MAC.get(self.ptt_key, FN_FLAG)
 
         def cb(proxy, etype, event, refcon):
             try:
                 if etype == kCGEventFlagsChanged:
-                    fn  = bool(CGEventGetFlags(event) & ptt_flag)
+                    flags = CGEventGetFlags(event)
+
+                    # ── Capture mode: detect which modifier was pressed ──
+                    if self._capture_mode:
+                        for name, flag in PTT_KEYS_MAC.items():
+                            if flags & flag:
+                                self._capture_mode = False
+                                self.ptt_key = name
+                                emit({"type": "ptt_key_captured", "key": name,
+                                      "display": PTT_KEY_DISPLAY.get(name, name)})
+                                return event
+                        return event
+
+                    ptt_flag = _get_ptt_flag()
+                    fn  = bool(flags & ptt_flag)
                     now = time.time()
                     if fn and not self._fn_down:
                         if now - self._fn_release_time < 0.3:
@@ -440,11 +456,24 @@ class Core:
 
     # ── Windows: pynput (Right Ctrl key) ──────────────────────────────────
     def _tap_thread_windows(self):
-        PTT = PTT_KEYS_WIN.get(self.ptt_key, _pynput_kb.Key.ctrl_r)
+        # Reverse map: pynput Key → our key name
+        _WIN_KEY_REV = {v: k for k, v in PTT_KEYS_WIN.items()}
+
+        def _get_ptt():
+            return PTT_KEYS_WIN.get(self.ptt_key, _pynput_kb.Key.ctrl_r)
 
         def on_press(key):
             try:
-                if key == PTT and not self._fn_down:
+                # ── Capture mode ──
+                if self._capture_mode and key in _WIN_KEY_REV:
+                    name = _WIN_KEY_REV[key]
+                    self._capture_mode = False
+                    self.ptt_key = name
+                    emit({"type": "ptt_key_captured", "key": name,
+                          "display": PTT_KEY_DISPLAY.get(name, name)})
+                    return
+
+                if key == _get_ptt() and not self._fn_down:
                     now = time.time()
                     if now - self._fn_release_time < 0.3:
                         return
@@ -455,7 +484,7 @@ class Core:
 
         def on_release(key):
             try:
-                if key == PTT and self._fn_down:
+                if key == _get_ptt() and self._fn_down:
                     self._fn_down         = False
                     self._fn_release_time = time.time()
                     threading.Thread(target=self._stop_rec, daemon=True).start()
@@ -487,6 +516,9 @@ class Core:
                         self.ptt_key = new_key
                         emit({"type": "ptt_key_ack", "key": new_key,
                               "display": PTT_KEY_DISPLAY.get(new_key, new_key)})
+                elif cmd.get("cmd") == "capture_ptt_key":
+                    self._capture_mode = True
+                    emit({"type": "ptt_capture_started"})
                 elif cmd.get("cmd") == "quit":
                     self._quit.set()
                 elif cmd.get("cmd") == "request_perm":

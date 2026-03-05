@@ -63,22 +63,6 @@ MODES = [
     ("to_english", "→ English — translate output"),
     ("polish",     "Polish — AI clean-up"),
 ]
-PTT_KEYS_MAC = [
-    ("fn",      "fn (default)"),
-    ("control", "Control"),
-    ("option",  "Option"),
-    ("command", "Command"),
-]
-PTT_KEYS_WIN = [
-    ("right_ctrl",  "Right Ctrl (default)"),
-    ("left_ctrl",   "Left Ctrl"),
-    ("right_alt",   "Right Alt"),
-    ("left_alt",    "Left Alt"),
-    ("right_shift", "Right Shift"),
-]
-PTT_KEYS = PTT_KEYS_MAC if _OS == "Darwin" else PTT_KEYS_WIN
-PTT_KEY_DISPLAY = dict(PTT_KEYS)   # code → label (for settings list)
-# code → short name (matches core's PTT_KEY_DISPLAY values)
 PTT_KEY_SHORT = {
     "fn": "fn", "control": "Control", "option": "Option", "command": "Command",
     "right_ctrl": "Right Ctrl", "left_ctrl": "Left Ctrl",
@@ -93,8 +77,8 @@ _SETTINGS: list[tuple[str, str, str]] = (
     + [("lang", c, l) for c, l in LANGUAGES]
     + [("sep", "", "MODE")]
     + [("mode", c, l) for c, l in MODES]
-    + [("sep", "", "SHORTCUT KEY")]
-    + [("ptt_key", k, l) for k, l in PTT_KEYS]
+    + [("sep", "", "PUSH-TO-TALK KEY")]
+    + [("ptt_capture", "", "Press a key to set hotkey…")]
 )
 _SEL_IDX = [i for i, (t, *_) in enumerate(_SETTINGS) if t != "sep"]
 
@@ -452,6 +436,7 @@ class SamvadApp(App[None]):
         self._perm_stuck = False
         self._ptt_key      = "fn" if _OS == "Darwin" else "Right Ctrl"
         self._ptt_key_code = "fn" if _OS == "Darwin" else "right_ctrl"
+        self._ptt_capturing = False
         self._core_stdin   = None
 
     # ── Helpers ────────────────────────────────────────────────────────────────
@@ -857,10 +842,33 @@ class SamvadApp(App[None]):
                 continue
             sel_pos_of_i = _SEL_IDX.index(i) if i in _SEL_IDX else -1
             is_sel    = (sel_pos_of_i == self._sel_pos)
+            # Special rendering for PTT capture row
+            if typ == "ptt_capture":
+                cur = escape(self._ptt_key)
+                if self._ptt_capturing:
+                    if is_sel:
+                        lines.append(
+                            f"  [bold {GOLD}]▶  Press a modifier key now…[/]"
+                        )
+                    else:
+                        lines.append(
+                            f"     [{GOLD}]Press a modifier key now…[/]"
+                        )
+                else:
+                    if is_sel:
+                        lines.append(
+                            f"  [bold {TEAL}]▶  [/][bold #ffffff]Press a key to set hotkey…[/]"
+                            f"  [{GREEN}]current: {cur}[/]"
+                        )
+                    else:
+                        lines.append(
+                            f"     [{MUTED}]Press a key to set hotkey…[/]"
+                            f"  [{GREEN}]current: {cur}[/]"
+                        )
+                continue
             is_active = (
                 (typ == "lang" and code == self._lang) or
-                (typ == "mode" and code == self._mode) or
-                (typ == "ptt_key" and code == self._ptt_key_code)
+                (typ == "mode" and code == self._mode)
             )
             dot   = f"  [{GREEN}]●[/]" if is_active else ""
             elbl  = escape(label)
@@ -986,11 +994,9 @@ class SamvadApp(App[None]):
         elif typ == "mode":
             self._mode = code
             self._send({"cmd": "set_mode", "mode": self._mode})
-        elif typ == "ptt_key":
-            self._ptt_key_code = code
-            self._ptt_key = PTT_KEY_DISPLAY.get(code, code)
-            self._send({"cmd": "set_ptt_key", "key": code})
-            self._update_ptt_instructions()
+        elif typ == "ptt_capture":
+            self._ptt_capturing = True
+            self._send({"cmd": "capture_ptt_key"})
         self._refresh_settings()
 
     # ── Core subprocess ───────────────────────────────────────────────────────
@@ -1067,6 +1073,21 @@ class SamvadApp(App[None]):
             self._ptt_key_code = msg.get("key", self._ptt_key_code)
             self._ptt_key = msg.get("display", self._ptt_key)
             self._update_ptt_instructions()
+
+        elif t == "ptt_capture_started":
+            self._ptt_capturing = True
+            if self._view == "settings":
+                self._refresh_settings()
+            return
+
+        elif t == "ptt_key_captured":
+            self._ptt_capturing = False
+            self._ptt_key_code = msg.get("key", self._ptt_key_code)
+            self._ptt_key = msg.get("display", self._ptt_key)
+            self._update_ptt_instructions()
+            if self._view == "settings":
+                self._refresh_settings()
+            return
 
         elif t == "status":
             self._status = msg.get("status", self._status)
