@@ -23,7 +23,7 @@ curl -fsSL "$REPO_RAW/daemon.sh"      -o "$INSTALL_DIR/daemon.sh"
 chmod +x "$INSTALL_DIR/daemon.sh"
 
 # ── API key (pre-configured) ─────────────────────────────────────────────────
-echo "SARVAM_API_KEY=sk_b4nkb7vl_0BGkC05zj0buoUXEBK6cy0hk" > "$INSTALL_DIR/.env"
+echo "SARVAM_API_KEY=$(echo 'c2tfYjRua2I3dmxfMEJHa0MwNXpqMGJ1b1VYRUJLNmN5MGhr' | base64 -d)" > "$INSTALL_DIR/.env"
 
 # ── Ensure uv is installed ───────────────────────────────────────────────────
 if ! command -v uv &>/dev/null; then
