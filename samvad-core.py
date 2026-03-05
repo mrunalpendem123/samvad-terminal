@@ -78,18 +78,37 @@ if PLATFORM == "Darwin":
             return bool(_cg.CGPreflightListenEventAccess())
 
     FN_FLAG = 0x800000
+    PTT_KEYS_MAC = {
+        "fn":      0x800000,
+        "control": 0x40000,
+        "option":  0x80000,
+        "command": 0x100000,
+    }
 
 # ── Windows-specific ───────────────────────────────────────────────────────────
 HAS_PYNPUT = False
+PTT_KEYS_WIN = {}
 if PLATFORM == "Windows":
     try:
         from pynput import keyboard as _pynput_kb
         import pyperclip
         HAS_PYNPUT = True
+        PTT_KEYS_WIN = {
+            "right_ctrl":  _pynput_kb.Key.ctrl_r,
+            "left_ctrl":   _pynput_kb.Key.ctrl_l,
+            "right_alt":   _pynput_kb.Key.alt_r,
+            "left_alt":    _pynput_kb.Key.alt_l,
+            "right_shift": _pynput_kb.Key.shift_r,
+        }
     except ImportError:
         pass
 
-PTT_KEY_NAME = "fn" if PLATFORM == "Darwin" else "Right Ctrl"
+PTT_KEY_DISPLAY = {
+    "fn": "fn", "control": "Control", "option": "Option", "command": "Command",
+    "right_ctrl": "Right Ctrl", "left_ctrl": "Left Ctrl",
+    "right_alt": "Right Alt", "left_alt": "Left Alt",
+    "right_shift": "Right Shift",
+}
 
 # ── Language/mode ──────────────────────────────────────────────────────────────
 LANGUAGES = [
@@ -209,6 +228,7 @@ class Core:
         self._tap_ready = threading.Event()
         self._tap_ok    = False
         self._recording = False
+        self.ptt_key    = "fn" if PLATFORM == "Darwin" else "right_ctrl"
 
     def _lang_name(self):
         return LANG_MAP.get(self.lang, (self.lang, self.lang))[1]
@@ -383,10 +403,12 @@ class Core:
 
     # ── macOS: CGEventTap (fn key) ────────────────────────────────────────
     def _tap_thread_macos(self):
+        ptt_flag = PTT_KEYS_MAC.get(self.ptt_key, FN_FLAG)
+
         def cb(proxy, etype, event, refcon):
             try:
                 if etype == kCGEventFlagsChanged:
-                    fn  = bool(CGEventGetFlags(event) & FN_FLAG)
+                    fn  = bool(CGEventGetFlags(event) & ptt_flag)
                     now = time.time()
                     if fn and not self._fn_down:
                         if now - self._fn_release_time < 0.3:
@@ -418,7 +440,7 @@ class Core:
 
     # ── Windows: pynput (Right Ctrl key) ──────────────────────────────────
     def _tap_thread_windows(self):
-        PTT = _pynput_kb.Key.ctrl_r
+        PTT = PTT_KEYS_WIN.get(self.ptt_key, _pynput_kb.Key.ctrl_r)
 
         def on_press(key):
             try:
@@ -458,6 +480,13 @@ class Core:
                     self.lang = cmd.get("lang", self.lang)
                 elif cmd.get("cmd") == "set_mode":
                     self.mode = cmd.get("mode", self.mode)
+                elif cmd.get("cmd") == "set_ptt_key":
+                    new_key = cmd.get("key", "")
+                    valid = PTT_KEYS_MAC if PLATFORM == "Darwin" else PTT_KEYS_WIN
+                    if new_key in valid:
+                        self.ptt_key = new_key
+                        emit({"type": "ptt_key_ack", "key": new_key,
+                              "display": PTT_KEY_DISPLAY.get(new_key, new_key)})
                 elif cmd.get("cmd") == "quit":
                     self._quit.set()
                 elif cmd.get("cmd") == "request_perm":
@@ -520,7 +549,8 @@ class Core:
             return
 
         emit({"type": "ready", "lang": self.lang, "mode": self.mode,
-              "has_key": bool(self.key), "ptt_key": PTT_KEY_NAME})
+              "has_key": bool(self.key),
+              "ptt_key": PTT_KEY_DISPLAY.get(self.ptt_key, self.ptt_key)})
 
         signal.signal(signal.SIGINT,  lambda *_: self._quit.set())
         signal.signal(signal.SIGTERM, lambda *_: self._quit.set())

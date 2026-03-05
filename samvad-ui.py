@@ -22,7 +22,7 @@ _OS = platform.system()   # "Darwin" | "Windows"
 from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical, Center
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll, Center
 from textual.reactive import reactive
 from textual.widgets import Static, ContentSwitcher, Digits, ProgressBar
 
@@ -63,6 +63,28 @@ MODES = [
     ("to_english", "→ English — translate output"),
     ("polish",     "Polish — AI clean-up"),
 ]
+PTT_KEYS_MAC = [
+    ("fn",      "fn (default)"),
+    ("control", "Control"),
+    ("option",  "Option"),
+    ("command", "Command"),
+]
+PTT_KEYS_WIN = [
+    ("right_ctrl",  "Right Ctrl (default)"),
+    ("left_ctrl",   "Left Ctrl"),
+    ("right_alt",   "Right Alt"),
+    ("left_alt",    "Left Alt"),
+    ("right_shift", "Right Shift"),
+]
+PTT_KEYS = PTT_KEYS_MAC if _OS == "Darwin" else PTT_KEYS_WIN
+PTT_KEY_DISPLAY = dict(PTT_KEYS)   # code → label (for settings list)
+# code → short name (matches core's PTT_KEY_DISPLAY values)
+PTT_KEY_SHORT = {
+    "fn": "fn", "control": "Control", "option": "Option", "command": "Command",
+    "right_ctrl": "Right Ctrl", "left_ctrl": "Left Ctrl",
+    "right_alt": "Right Alt", "left_alt": "Left Alt",
+    "right_shift": "Right Shift",
+}
 SPIN   = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 VBLOCK = " ▁▂▃▄▅▆▇█"
 
@@ -71,6 +93,8 @@ _SETTINGS: list[tuple[str, str, str]] = (
     + [("lang", c, l) for c, l in LANGUAGES]
     + [("sep", "", "MODE")]
     + [("mode", c, l) for c, l in MODES]
+    + [("sep", "", "SHORTCUT KEY")]
+    + [("ptt_key", k, l) for k, l in PTT_KEYS]
 )
 _SEL_IDX = [i for i, (t, *_) in enumerate(_SETTINGS) if t != "sep"]
 
@@ -426,8 +450,9 @@ class SamvadApp(App[None]):
         self._perm      = {"im": False, "ax": False}
         self._perm_sel  = 0   # 0 = Input Monitoring, 1 = Accessibility
         self._perm_stuck = False
-        self._ptt_key   = "fn" if _OS == "Darwin" else "Right Ctrl"
-        self._core_stdin = None
+        self._ptt_key      = "fn" if _OS == "Darwin" else "Right Ctrl"
+        self._ptt_key_code = "fn" if _OS == "Darwin" else "right_ctrl"
+        self._core_stdin   = None
 
     # ── Helpers ────────────────────────────────────────────────────────────────
     def _lang_label(self, code: str = "") -> str:
@@ -553,7 +578,7 @@ class SamvadApp(App[None]):
                 yield Static("", id="perm-instr")
 
             # ── Settings ──────────────────────────────────────────────────
-            with Container(id="settings-view"):
+            with VerticalScroll(id="settings-view"):
                 yield Static("[bold]Settings[/]", id="settings-header")
                 yield Static("", id="settings-list")
 
@@ -766,6 +791,7 @@ class SamvadApp(App[None]):
         lines = [
             f"  [{MUTED}]Language[/]  [{TEAL}]{escape(self._lang_label())}[/]",
             f"  [{MUTED}]Mode[/]      [{TEAL}]{escape(mode_short)}[/]",
+            f"  [{MUTED}]Hotkey[/]    [{TEAL}]{escape(self._ptt_key)}[/]  [{DIM}](change in Settings)[/]",
             f"  [{api_color}]{api_text}[/]",
         ]
         if self._history:
@@ -833,7 +859,8 @@ class SamvadApp(App[None]):
             is_sel    = (sel_pos_of_i == self._sel_pos)
             is_active = (
                 (typ == "lang" and code == self._lang) or
-                (typ == "mode" and code == self._mode)
+                (typ == "mode" and code == self._mode) or
+                (typ == "ptt_key" and code == self._ptt_key_code)
             )
             dot   = f"  [{GREEN}]●[/]" if is_active else ""
             elbl  = escape(label)
@@ -850,6 +877,12 @@ class SamvadApp(App[None]):
         ]
         try:
             self.query_one("#settings-list", Static).update("\n".join(lines))
+            # Auto-scroll so the selected item stays visible
+            sv = self.query_one("#settings-view", VerticalScroll)
+            total = len(_SEL_IDX)
+            if total > 1:
+                frac = self._sel_pos / (total - 1)
+                sv.scroll_to(y=frac * sv.max_scroll_y, animate=False)
         except Exception:
             pass
 
@@ -953,6 +986,11 @@ class SamvadApp(App[None]):
         elif typ == "mode":
             self._mode = code
             self._send({"cmd": "set_mode", "mode": self._mode})
+        elif typ == "ptt_key":
+            self._ptt_key_code = code
+            self._ptt_key = PTT_KEY_DISPLAY.get(code, code)
+            self._send({"cmd": "set_ptt_key", "key": code})
+            self._update_ptt_instructions()
         self._refresh_settings()
 
     # ── Core subprocess ───────────────────────────────────────────────────────
@@ -1018,6 +1056,16 @@ class SamvadApp(App[None]):
             self._mode    = msg.get("mode", self._mode)
             self._has_key = bool(msg.get("has_key"))
             self._ptt_key = msg.get("ptt_key", self._ptt_key)
+            # Reverse-lookup the code from short display name
+            for k, v in PTT_KEY_SHORT.items():
+                if v == self._ptt_key:
+                    self._ptt_key_code = k
+                    break
+            self._update_ptt_instructions()
+
+        elif t == "ptt_key_ack":
+            self._ptt_key_code = msg.get("key", self._ptt_key_code)
+            self._ptt_key = msg.get("display", self._ptt_key)
             self._update_ptt_instructions()
 
         elif t == "status":
