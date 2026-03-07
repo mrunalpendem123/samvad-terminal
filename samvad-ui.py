@@ -1138,6 +1138,24 @@ class SamvadApp(App[None]):
             return  # no full refresh for amp
 
         self._refresh_ui()
+        self._write_overlay_state()
+
+    def _write_overlay_state(self) -> None:
+        """Write current status to a temp file for the floating overlay."""
+        try:
+            import tempfile
+            state = {"status": self._status}
+            if self._status == "done":
+                state["text"] = self._last_text[:50]
+            elif self._status == "error":
+                state["msg"] = self._err_msg[:50]
+            elif self._status == "perm":
+                state["im"] = self._perm.get("im", False)
+                state["ax"] = self._perm.get("ax", False)
+            p = Path(tempfile.gettempdir()) / ".samvad_state.json"
+            p.write_text(json.dumps(state))
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

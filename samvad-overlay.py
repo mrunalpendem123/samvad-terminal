@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 """
-samvad-overlay.py — Minimal floating overlay UI for Samvad
+samvad-overlay.py — Floating indicator for Samvad
 
-Hidden by default. Appears only when recording/processing, then disappears.
-Small pill at bottom-center, above the dock.
+Runs alongside the terminal UI. Reads status from /tmp/.samvad_state.json
+(written by samvad-ui.py). Hidden when idle, appears when listening/processing.
 
-Run via: samvad --overlay  (or run-overlay.sh)
+Launched automatically by daemon.sh — no need to run manually.
 """
 from __future__ import annotations
 import json
 import math
 import os
-import subprocess
 import sys
-import threading
+import tempfile
 import time
 from pathlib import Path
 
@@ -39,6 +38,9 @@ from AppKit import (
 )
 from Foundation import NSObject
 import objc
+
+# ── State file ────────────────────────────────────────────────────────────────
+STATE_FILE = Path(tempfile.gettempdir()) / ".samvad_state.json"
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 PILL_W = 160
@@ -66,26 +68,26 @@ COL_DIM      = rgba(80, 80, 80)
 
 SPIN = ["\u280B","\u2819","\u2839","\u2838","\u283C","\u2834","\u2826","\u2827","\u2807","\u280F"]
 
-# States where the pill should be visible
+# States where the pill is visible
 VISIBLE_STATES = {"recording", "transcribing", "translating", "polishing", "done", "error", "perm"}
 
 
 class OverlayView(NSView):
-    """Custom view that draws the pill background and status text."""
 
     def initWithFrame_(self, frame):
         self = objc.super(OverlayView, self).initWithFrame_(frame)
         if self is None:
             return None
-        self._status = "init"
+        self._status = "idle"
         self._text = ""
+        self._err_msg = ""
         self._rec_start = 0.0
         self._tick_count = 0
         self._done_time = 0.0
         self._err_time = 0.0
-        self._err_msg = ""
         self._perm_im = False
         self._perm_ax = False
+        self._prev_status = "idle"
         return self
 
     def isFlipped(self):
@@ -172,8 +174,36 @@ class OverlayView(NSView):
         else:
             return ("\u25CC", "Samvad", COL_TEAL)
 
+    def readState(self):
+        """Read status from the shared state file."""
+        try:
+            if not STATE_FILE.exists():
+                return
+            data = json.loads(STATE_FILE.read_text())
+            new_status = data.get("status", "idle")
+
+            # Track transitions
+            if new_status != self._prev_status:
+                if new_status == "recording":
+                    self._rec_start = time.monotonic()
+                elif new_status == "done":
+                    self._done_time = time.monotonic()
+                    self._text = data.get("text", "")
+                elif new_status == "error":
+                    self._err_time = time.monotonic()
+                    self._err_msg = data.get("msg", "")
+                elif new_status == "perm":
+                    self._perm_im = data.get("im", False)
+                    self._perm_ax = data.get("ax", False)
+                self._prev_status = new_status
+
+            self._status = new_status
+        except Exception:
+            pass
+
     def tick(self):
         self._tick_count += 1
+        self.readState()
 
         # Auto-hide done after 3s
         if self._status == "done" and time.monotonic() - self._done_time > 3:
@@ -206,8 +236,6 @@ class AppDelegate(NSObject):
         self = objc.super(AppDelegate, self).init()
         self._window = None
         self._overlay = None
-        self._core_proc = None
-        self._core_stdin = None
         self._visible = False
         return self
 
@@ -228,14 +256,13 @@ class AppDelegate(NSObject):
         panel.setOpaque_(False)
         panel.setBackgroundColor_(NSColor.clearColor())
         panel.setHasShadow_(True)
-        panel.setIgnoresMouseEvents_(False)
-        panel.setMovableByWindowBackground_(True)
+        panel.setIgnoresMouseEvents_(True)
         panel.setCollectionBehavior_(
             AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces
             | AppKit.NSWindowCollectionBehaviorStationary
             | AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary
         )
-        # Start hidden — alpha 0
+        # Start hidden
         panel.setAlphaValue_(0.0)
 
         overlay = OverlayView.alloc().initWithFrame_(
@@ -248,36 +275,10 @@ class AppDelegate(NSObject):
         self._overlay = overlay
         self._visible = False
 
+        # Poll state file at 10fps
         NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             0.1, self, "onTick:", None, True
         )
-
-        thread = threading.Thread(target=self._run_core, daemon=True)
-        thread.start()
-
-    def _show_pill(self):
-        """Fade in the pill."""
-        if self._visible:
-            return
-        self._visible = True
-        panel = self._window
-        if panel is None:
-            return
-        ctx = NSAnimationContext.currentContext()
-        ctx.setDuration_(0.2)
-        panel.animator().setAlphaValue_(1.0)
-
-    def _hide_pill(self):
-        """Fade out the pill."""
-        if not self._visible:
-            return
-        self._visible = False
-        panel = self._window
-        if panel is None:
-            return
-        ctx = NSAnimationContext.currentContext()
-        ctx.setDuration_(0.3)
-        panel.animator().setAlphaValue_(0.0)
 
     def onTick_(self, timer):
         ov = self._overlay
@@ -285,140 +286,40 @@ class AppDelegate(NSObject):
             return
         ov.tick()
 
-        # Show/hide based on status
         if ov._status in VISIBLE_STATES:
-            self._show_pill()
+            self._show()
         else:
-            self._hide_pill()
+            self._hide()
 
-    def _find_uv(self):
-        for p in [
-            os.path.expanduser("~/.cargo/bin/uv"),
-            os.path.expanduser("~/.local/bin/uv"),
-            "/usr/local/bin/uv",
-            "/opt/homebrew/bin/uv",
-        ]:
-            if os.path.isfile(p):
-                return p
-        return "uv"
-
-    def _run_core(self):
-        """Spawn samvad-core.py and read its JSON messages. Retry on failure."""
-        dir_ = Path(__file__).parent
-        uv = self._find_uv()
-        args = [
-            uv, "run", "--python", "3.11", "--no-project",
-            "--with", "sounddevice>=0.4",
-            "--with", "numpy>=1.26",
-            "--with", "requests>=2.28",
-            "--with", "pyobjc-framework-Cocoa>=10",
-            "--with", "pyobjc-framework-Quartz>=10",
-            "python", str(dir_ / "samvad-core.py"),
-        ]
-
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                proc = subprocess.Popen(
-                    args,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    env=os.environ.copy(),
-                )
-            except FileNotFoundError:
-                print(f"ERROR: '{uv}' not found.", file=sys.stderr, flush=True)
-                time.sleep(2)
-                continue
-
-            self._core_proc = proc
-            self._core_stdin = proc.stdin
-
-            for raw in proc.stdout:
-                line = raw.decode(errors="replace").strip()
-                if not line:
-                    continue
-                try:
-                    msg = json.loads(line)
-                    self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                        "handleCoreMsg:", msg, False
-                    )
-                except Exception:
-                    pass
-
-            stderr_out = proc.stderr.read().decode(errors="replace").strip()
-            exit_code = proc.wait()
-
-            if exit_code == 0:
-                print("Core exited cleanly.", file=sys.stderr, flush=True)
-                break
-
-            print(f"Core exited with code {exit_code} (attempt {attempt+1}/{max_retries})",
-                  file=sys.stderr, flush=True)
-            if stderr_out:
-                print(f"Core stderr: {stderr_out[:500]}", file=sys.stderr, flush=True)
-
-            self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                "handleCoreMsg:", {"type": "error", "msg": "Core crashed, retrying..."}, False
-            )
-            time.sleep(3)
-
-    def handleCoreMsg_(self, msg):
-        if not isinstance(msg, dict):
+    def _show(self):
+        if self._visible:
             return
-        t = msg.get("type", "")
-        ov = self._overlay
-        if ov is None:
+        self._visible = True
+        panel = self._window
+        if panel is None:
             return
+        ctx = NSAnimationContext.currentContext()
+        ctx.setDuration_(0.15)
+        panel.animator().setAlphaValue_(1.0)
 
-        if t == "ready":
-            ov._status = "idle"
-
-        elif t == "status":
-            status = msg.get("status", "")
-            ov._status = status
-            if status == "recording":
-                ov._rec_start = time.monotonic()
-
-        elif t == "done":
-            ov._status = "done"
-            ov._done_time = time.monotonic()
-            ov._text = msg.get("text", "")
-
-        elif t == "error":
-            ov._status = "error"
-            ov._err_msg = msg.get("msg", "unknown")
-            ov._err_time = time.monotonic()
-
-        elif t == "perm":
-            ov._perm_im = bool(msg.get("im"))
-            ov._perm_ax = bool(msg.get("ax"))
-            if not (ov._perm_im and ov._perm_ax):
-                ov._status = "perm"
-            else:
-                ov._status = "init"
-
-        elif t == "amp":
+    def _hide(self):
+        if not self._visible:
             return
-
-        elif t == "init":
-            pass
-
-        ov.setNeedsDisplay_(True)
-
-    def quitApp_(self, _):
-        NSApp.terminate_(None)
-
-    def sendToCore_(self, msg):
-        if self._core_stdin:
-            try:
-                self._core_stdin.write((json.dumps(msg) + "\n").encode())
-                self._core_stdin.flush()
-            except Exception:
-                pass
+        self._visible = False
+        panel = self._window
+        if panel is None:
+            return
+        ctx = NSAnimationContext.currentContext()
+        ctx.setDuration_(0.25)
+        panel.animator().setAlphaValue_(0.0)
 
 
 def main():
+    # Clean up stale state on start
+    try:
+        STATE_FILE.write_text(json.dumps({"status": "idle"}))
+    except Exception:
+        pass
     app = NSApplication.sharedApplication()
     delegate = AppDelegate.alloc().init()
     app.setDelegate_(delegate)
