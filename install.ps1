@@ -39,9 +39,16 @@ Write-Pass "Downloaded samvad-core, samvad-ui, daemon"
 
 # ── Step 2: API key ─────────────────────────────────────────────────────────
 Write-Step 2 5 "Configuring API key..."
-$k = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("c2tfYjRua2I3dmxfMEJHa0MwNXpqMGJ1b1VYRUJLNmN5MGhr"))
-[System.IO.File]::WriteAllText("$INSTALL_DIR\.env", "SARVAM_API_KEY=$k`n")
-Write-Pass "API key written to ~\.samvad\.env"
+$envFile = "$INSTALL_DIR\.env"
+if ($env:SARVAM_API_KEY) {
+    [System.IO.File]::WriteAllText($envFile, "SARVAM_API_KEY=$($env:SARVAM_API_KEY)`n")
+    Write-Pass "API key written to ~\.samvad\.env"
+} elseif (Test-Path $envFile) {
+    Write-Pass "Existing ~\.samvad\.env preserved"
+} else {
+    [System.IO.File]::WriteAllText($envFile, "# Get your key at https://www.sarvam.ai`nSARVAM_API_KEY=`n")
+    Write-Info "No API key found - edit ~\.samvad\.env with your SARVAM_API_KEY"
+}
 
 # ── Step 3: Python runtime ──────────────────────────────────────────────────
 Write-Step 3 5 "Checking Python runtime (uv)..."

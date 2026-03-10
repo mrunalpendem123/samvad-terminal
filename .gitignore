@@ -13,3 +13,5 @@ run.sh
 pyproject.toml
 package.json
 .DS_Store
+.env
+.env.*

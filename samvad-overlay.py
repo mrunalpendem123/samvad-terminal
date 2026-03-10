@@ -179,7 +179,10 @@ class OverlayView(NSView):
         try:
             if not STATE_FILE.exists():
                 return
-            data = json.loads(STATE_FILE.read_text())
+            raw = STATE_FILE.read_text()
+            if not raw.strip():
+                return
+            data = json.loads(raw)
             new_status = data.get("status", "idle")
 
             # Track transitions

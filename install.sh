@@ -44,8 +44,18 @@ pass "Downloaded samvad-core, samvad-ui, daemon"
 
 # ── Step 2: API key ────────────────────────────────────────────────────────
 echo -e "  ${BOLD}[2/4]${RESET} ${GRAY}Configuring API key...${RESET}"
-echo "SARVAM_API_KEY=$(echo 'c2tfYjRua2I3dmxfMEJHa0MwNXpqMGJ1b1VYRUJLNmN5MGhr' | base64 -d)" > "$INSTALL_DIR/.env"
-pass "API key written to ~/.samvad/.env"
+if [ -n "$SARVAM_API_KEY" ]; then
+  echo "SARVAM_API_KEY=$SARVAM_API_KEY" > "$INSTALL_DIR/.env"
+  chmod 600 "$INSTALL_DIR/.env"
+  pass "API key written to ~/.samvad/.env"
+elif [ -f "$HOME/.samvad/.env" ]; then
+  pass "Existing ~/.samvad/.env preserved"
+else
+  echo "# Get your key at https://www.sarvam.ai" > "$INSTALL_DIR/.env"
+  echo "SARVAM_API_KEY=" >> "$INSTALL_DIR/.env"
+  chmod 600 "$INSTALL_DIR/.env"
+  info "No API key found — edit ~/.samvad/.env with your SARVAM_API_KEY"
+fi
 
 # ── Step 3: Python runtime ─────────────────────────────────────────────────
 echo -e "  ${BOLD}[3/4]${RESET} ${GRAY}Checking Python runtime (uv)...${RESET}"

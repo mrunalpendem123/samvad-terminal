@@ -153,8 +153,10 @@ def _acquire_instance_lock() -> bool:
     """Returns True if we got the lock, False if another instance is running."""
     if _INSTANCE_LOCK.exists():
         try:
-            pid = int(_INSTANCE_LOCK.read_text().strip())
-            # Check if that PID is still alive
+            content = _INSTANCE_LOCK.read_text().strip()
+            pid = int(content)
+            if pid == os.getpid():
+                return True  # we already hold it
             if PLATFORM == "Windows":
                 import ctypes as _ct
                 SYNCHRONIZE = 0x00100000
@@ -164,52 +166,116 @@ def _acquire_instance_lock() -> bool:
                     return False   # still running
             else:
                 os.kill(pid, 0)
-                return False       # still running
-        except (ValueError, OSError):
+                # PID exists — verify it's actually a samvad/python process
+                # to handle PID recycling after crash
+                try:
+                    r = subprocess.run(
+                        ["ps", "-p", str(pid), "-o", "comm="],
+                        capture_output=True, text=True, timeout=2)
+                    pname = r.stdout.strip().lower()
+                    if "python" in pname or "samvad" in pname:
+                        return False   # still running
+                    # PID recycled to a non-Python process — stale lock
+                except Exception:
+                    return False       # can't verify, assume running
+        except (ValueError, OSError, PermissionError):
             pass   # stale lock — process is gone
     _INSTANCE_LOCK.write_text(str(os.getpid()))
+    try:
+        os.chmod(str(_INSTANCE_LOCK), 0o600)
+    except OSError:
+        pass
     atexit.register(lambda: _INSTANCE_LOCK.unlink(missing_ok=True))
     return True
 
 # ── Cross-platform paste lock ──────────────────────────────────────────────────
 _paste_mutex = threading.Lock()   # in-process guard
-_PASTE_COOLDOWN = 1.5             # seconds between pastes
+_PASTE_COOLDOWN = 0.5             # seconds between pastes (reduced from 1.5)
 _last_paste_time = 0.0
+_MAX_PASTE_RETRIES = 3
 
 def _do_paste(text: str) -> bool:
-    """Paste text at cursor. Returns False if blocked by cooldown/lock."""
+    """Paste text at cursor. Retries if blocked by cooldown. Returns False only on hard failure."""
     global _last_paste_time
-    if not _paste_mutex.acquire(blocking=False):
-        return False
-    try:
-        now = time.time()
-        if now - _last_paste_time < _PASTE_COOLDOWN:
+
+    for attempt in range(_MAX_PASTE_RETRIES):
+        if not _paste_mutex.acquire(blocking=True, timeout=2.0):
+            emit({"type": "error", "msg": "Paste busy — try again"})
+            return False
+        try:
+            now = time.time()
+            wait = _PASTE_COOLDOWN - (now - _last_paste_time)
+            if wait > 0:
+                _paste_mutex.release()
+                time.sleep(wait)
+                continue  # retry after cooldown
+
+            if PLATFORM == "Darwin":
+                # Save existing clipboard
+                saved_clip = None
+                try:
+                    r = subprocess.run(["pbpaste"], capture_output=True, timeout=2)
+                    if r.returncode == 0:
+                        saved_clip = r.stdout
+                except Exception:
+                    pass
+
+                # Paste via pbcopy + Cmd+V
+                subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True,
+                               timeout=5)
+                time.sleep(0.08)
+                subprocess.run(["osascript", "-e",
+                    'tell application "System Events" to keystroke "v" using command down'],
+                    check=True, timeout=5)
+
+                # Restore clipboard after a brief delay
+                if saved_clip is not None:
+                    time.sleep(0.3)
+                    try:
+                        subprocess.run(["pbcopy"], input=saved_clip, check=False,
+                                       timeout=2)
+                    except Exception:
+                        pass
+
+            elif PLATFORM == "Windows":
+                import pyperclip
+                from pynput.keyboard import Controller as _KBC, Key as _Key
+                saved_clip = None
+                try:
+                    saved_clip = pyperclip.paste()
+                except Exception:
+                    pass
+
+                pyperclip.copy(text)
+                time.sleep(0.08)
+                kb = _KBC()
+                kb.press(_Key.ctrl)
+                kb.press('v')
+                kb.release('v')
+                kb.release(_Key.ctrl)
+
+                if saved_clip is not None:
+                    time.sleep(0.3)
+                    try:
+                        pyperclip.copy(saved_clip)
+                    except Exception:
+                        pass
+
+            _last_paste_time = time.time()
+            time.sleep(0.3)
+            _paste_mutex.release()
+            return True
+        except subprocess.TimeoutExpired:
+            _paste_mutex.release()
+            emit({"type": "error", "msg": "Paste timed out — is an app focused?"})
+            return False
+        except Exception as e:
+            _paste_mutex.release()
+            emit({"type": "error", "msg": f"Paste failed: {e}"})
             return False
 
-        if PLATFORM == "Darwin":
-            # macOS: pbcopy + osascript Cmd+V
-            subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True)
-            time.sleep(0.08)
-            subprocess.run(["osascript", "-e",
-                'tell application "System Events" to keystroke "v" using command down'],
-                check=True)
-        elif PLATFORM == "Windows":
-            # Windows: pyperclip + pynput Ctrl+V
-            import pyperclip
-            from pynput.keyboard import Controller as _KBC, Key as _Key
-            pyperclip.copy(text)
-            time.sleep(0.08)
-            kb = _KBC()
-            kb.press(_Key.ctrl)
-            kb.press('v')
-            kb.release('v')
-            kb.release(_Key.ctrl)
-
-        _last_paste_time = time.time()
-        time.sleep(0.5)   # brief hold before releasing mutex
-        return True
-    finally:
-        _paste_mutex.release()
+    emit({"type": "error", "msg": "Paste blocked by cooldown — try again"})
+    return False
 
 
 # ── Core ───────────────────────────────────────────────────────────────────────
@@ -359,7 +425,8 @@ class Core:
 
     # ── Transcription + paste ─────────────────────────────────────────────
     def _tx_thread(self):
-        if not self._tx_lock.acquire(blocking=False):
+        if not self._tx_lock.acquire(blocking=True, timeout=30):
+            emit({"type": "error", "msg": "Transcription busy — try again"})
             return
         try:
             frames, self._frames = self._frames, []
@@ -388,7 +455,16 @@ class Core:
                 text = self._polish(text)
 
             if not _do_paste(text):
-                emit({"type": "status", "status": "idle"}); return
+                # Paste failed but we still have the text — report it
+                # so the user can see what was transcribed
+                emit({
+                    "type": "done",
+                    "text": text,
+                    "time": datetime.now().strftime("%H:%M"),
+                    "lang": self._lang_name(),
+                    "paste_failed": True,
+                })
+                return
 
             emit({
                 "type": "done",
@@ -427,7 +503,7 @@ class Core:
                     fn  = bool(flags & ptt_flag)
                     now = time.time()
                     if fn and not self._fn_down:
-                        if now - self._fn_release_time < 0.3:
+                        if now - self._fn_release_time < 0.15:
                             return event
                         self._fn_down = True
                         threading.Thread(target=self._start_rec, daemon=True).start()
@@ -475,7 +551,7 @@ class Core:
 
                 if key == _get_ptt() and not self._fn_down:
                     now = time.time()
-                    if now - self._fn_release_time < 0.3:
+                    if now - self._fn_release_time < 0.15:
                         return
                     self._fn_down = True
                     threading.Thread(target=self._start_rec, daemon=True).start()

@@ -437,6 +437,7 @@ class SamvadApp(App[None]):
         self._ptt_key      = "fn" if _OS == "Darwin" else "Right Ctrl"
         self._ptt_key_code = "fn" if _OS == "Darwin" else "right_ctrl"
         self._ptt_capturing = False
+        self._paste_failed  = False
         self._core_stdin   = None
 
     # ── Helpers ────────────────────────────────────────────────────────────────
@@ -655,7 +656,7 @@ class SamvadApp(App[None]):
             # Countdown hint
             if remain > 0:
                 hint = (
-                    f"[{DIM}]Hold \\[fn] again  ·  \\[Esc] dismiss  ·  "
+                    f"[{DIM}]Hold \\[{self._ptt_key}] again  ·  \\[Esc] dismiss  ·  "
                     f"clears in [{TEAL}]{remain}s[/][/]"
                 )
             else:
@@ -740,11 +741,19 @@ class SamvadApp(App[None]):
             self._switch("work-view")
         elif status == "done":
             txt = escape(self._last_text[:250])
+            paste_note = ""
+            if self._paste_failed:
+                paste_note = f"\n[{RED}]Paste failed — text copied to clipboard[/]"
             try:
-                self.query_one("#done-text", Static).update(f"[#dddddd]{txt}[/]")
+                self.query_one("#done-text", Static).update(f"[#dddddd]{txt}[/]{paste_note}")
                 mode_short = {
                     "direct": "Direct", "to_english": "→ English", "polish": "Polish",
                 }.get(self._mode, self._mode_label())
+                title_text = (
+                    f"[bold {GREEN}]✓  Pasted at cursor[/]" if not self._paste_failed
+                    else f"[bold {GOLD}]⚠  Transcribed (paste failed)[/]"
+                )
+                self.query_one("#done-title", Static).update(title_text)
                 self.query_one("#done-meta", Static).update(
                     f"[{MUTED}]{escape(self._lang_label())}  ·  {escape(mode_short)}[/]"
                 )
@@ -1112,6 +1121,7 @@ class SamvadApp(App[None]):
             self._status    = "done"
             self._done_time = time.monotonic()
             self._last_text = msg.get("text", "")
+            self._paste_failed = bool(msg.get("paste_failed", False))
             self._view      = "idle"
             self._history.append({
                 "text": self._last_text,
@@ -1141,7 +1151,7 @@ class SamvadApp(App[None]):
         self._write_overlay_state()
 
     def _write_overlay_state(self) -> None:
-        """Write current status to a temp file for the floating overlay."""
+        """Write current status to a temp file for the floating overlay (atomic)."""
         try:
             import tempfile
             state = {"status": self._status}
@@ -1153,7 +1163,11 @@ class SamvadApp(App[None]):
                 state["im"] = self._perm.get("im", False)
                 state["ax"] = self._perm.get("ax", False)
             p = Path(tempfile.gettempdir()) / ".samvad_state.json"
-            p.write_text(json.dumps(state))
+            tmp = p.with_suffix(".tmp")
+            tmp.write_text(json.dumps(state))
+            import os
+            os.chmod(str(tmp), 0o600)
+            tmp.rename(p)  # atomic on POSIX
         except Exception:
             pass
 

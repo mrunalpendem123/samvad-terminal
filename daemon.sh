@@ -5,18 +5,24 @@ set -e
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# ── Load API key ────────────────────────────────────────────────────────────────
-if [ -f "$DIR/.env" ]; then
-  export $(grep -v '^#' "$DIR/.env" | xargs) 2>/dev/null || true
-fi
-SARVAM_ENV="$HOME/Desktop/sarvam/backend/.env"
-if [ -f "$SARVAM_ENV" ]; then
-  while IFS= read -r line; do
-    [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
-    key="${line%%=*}"
-    [[ -z "${!key}" ]] && export "$line" 2>/dev/null || true
-  done < "$SARVAM_ENV"
-fi
+# ── Load API key (safe: only exports KEY=VALUE lines, no eval) ───────────────
+_safe_load_env() {
+  local envfile="$1"
+  [ -f "$envfile" ] || return 0
+  while IFS='=' read -r key value; do
+    key="${key#"${key%%[![:space:]]*}"}"   # trim leading whitespace
+    [[ -z "$key" || "$key" == \#* ]] && continue
+    # Only allow alphanumeric + underscore keys (prevent injection)
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    value="${value#"${value%%[![:space:]]*}"}"   # trim leading whitespace
+    value="${value%"${value##*[![:space:]]}"}"   # trim trailing whitespace
+    value="${value#[\"\']}"   # strip leading quote
+    value="${value%[\"\']}"   # strip trailing quote
+    [ -z "${!key}" ] && export "$key=$value"
+  done < "$envfile"
+}
+_safe_load_env "$DIR/.env"
+_safe_load_env "$HOME/Desktop/sarvam/backend/.env"
 
 # ── Ensure uv is installed ──────────────────────────────────────────────────────
 if ! command -v uv &> /dev/null; then
