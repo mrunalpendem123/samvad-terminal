@@ -1,6 +1,6 @@
-# Samvad — Voice to Text for macOS & Windows
+# Samvad — Voice to Text for macOS, Windows & Linux
 
-Hold `fn` (macOS) or `Right Ctrl` (Windows) anywhere → speak → release → text pastes at your cursor.
+Hold `fn` (macOS) or `Right Ctrl` (Windows/Linux) anywhere → speak → release → text pastes at your cursor.
 
 ## Install
 
@@ -21,6 +21,81 @@ samvad
 - **Input Monitoring**
 
 Then run `samvad` again.
+
+---
+
+### Linux
+
+Works on **Ubuntu**, **Debian**, **Fedora**, **Arch**, **openSUSE**, **Mint**, **Pop!_OS**, **Manjaro**, **Elementary**, and other Linux distros. Supports both **X11** and **Wayland**.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mrunalpendem123/samvad-terminal/main/install.sh | bash
+```
+
+Then run:
+
+```bash
+samvad
+```
+
+**First run:** If key listening fails, add your user to the `input` group:
+
+```bash
+sudo usermod -aG input $USER
+```
+
+Then **log out and back in**, and run `samvad` again.
+
+#### System dependencies
+
+The installer auto-detects your package manager (apt, dnf, pacman, zypper, apk) and installs:
+
+| Package | Purpose |
+|---------|---------|
+| `portaudio` | Audio capture from microphone |
+| `gtk3` + `python3-gi` | Floating overlay indicator |
+| **X11:** `xclip` + `xdotool` | Clipboard access + simulating Ctrl+V |
+| **Wayland:** `wl-clipboard` + `wtype` | Clipboard access + simulating Ctrl+V |
+
+<details>
+<summary>Manual install (if auto-detect fails)</summary>
+
+**Ubuntu / Debian:**
+```bash
+sudo apt install portaudio19-dev python3-gi python3-gi-cairo gir1.2-gtk-3.0
+# X11:
+sudo apt install xclip xdotool
+# Wayland:
+sudo apt install wl-clipboard wtype
+```
+
+**Fedora:**
+```bash
+sudo dnf install portaudio-devel python3-gobject gtk3
+# X11:
+sudo dnf install xclip xdotool
+# Wayland:
+sudo dnf install wl-clipboard wtype
+```
+
+**Arch / Manjaro:**
+```bash
+sudo pacman -S portaudio python-gobject gtk3
+# X11:
+sudo pacman -S xclip xdotool
+# Wayland:
+sudo pacman -S wl-clipboard wtype
+```
+
+**openSUSE:**
+```bash
+sudo zypper install portaudio-devel python3-gobject gtk3-devel
+# X11:
+sudo zypper install xclip xdotool
+# Wayland:
+sudo zypper install wl-clipboard wtype
+```
+</details>
 
 ---
 
@@ -73,5 +148,5 @@ English, Hindi, Hinglish→English, Tamil, Telugu, Malayalam, Kannada, Marathi, 
 
 ## Requirements
 
-- macOS or Windows
+- macOS, Windows, or Linux (X11 or Wayland)
 - Internet connection (for transcription via Sarvam AI)

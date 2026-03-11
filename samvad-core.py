@@ -1,18 +1,31 @@
 #!/usr/bin/env python3
 """
-samvad-core — cross-platform backend (macOS + Windows)
-PTT key: fn (macOS) | Right Ctrl (Windows)
+samvad-core — cross-platform backend (macOS + Windows + Linux)
+PTT key: fn (macOS) | Right Ctrl (Windows/Linux)
 Communicates with samvad-ui.py via JSON lines on stdio.
 """
 from __future__ import annotations
-import atexit, io, json, os, platform, re, signal, subprocess, sys
+import atexit, io, json, os, platform, re, shutil, signal, subprocess, sys
 import threading, time, wave
 from datetime import datetime
 from pathlib import Path
 
 import requests
 
-PLATFORM = platform.system()   # "Darwin" | "Windows"
+PLATFORM = platform.system()   # "Darwin" | "Windows" | "Linux"
+
+# ── Linux display server detection ────────────────────────────────────────────
+_LINUX_SESSION = "x11"  # default
+if PLATFORM == "Linux":
+    _sess = os.environ.get("XDG_SESSION_TYPE", "").lower()
+    if _sess == "wayland":
+        _LINUX_SESSION = "wayland"
+    elif _sess == "x11":
+        _LINUX_SESSION = "x11"
+    elif os.environ.get("WAYLAND_DISPLAY"):
+        _LINUX_SESSION = "wayland"
+    else:
+        _LINUX_SESSION = "x11"
 
 # ── Cross-platform lock files ──────────────────────────────────────────────────
 if PLATFORM == "Windows":
@@ -85,13 +98,17 @@ if PLATFORM == "Darwin":
         "command": 0x100000,
     }
 
-# ── Windows-specific ───────────────────────────────────────────────────────────
+# ── Windows / Linux-specific ───────────────────────────────────────────────────
 HAS_PYNPUT = False
 PTT_KEYS_WIN = {}
-if PLATFORM == "Windows":
+if PLATFORM in ("Windows", "Linux"):
+    # On Wayland, pynput needs evdev backend — ensure user is in 'input' group
+    if PLATFORM == "Linux" and _LINUX_SESSION == "wayland":
+        os.environ.setdefault("PYNPUT_BACKEND", "xorg")  # try X first via XWayland
     try:
         from pynput import keyboard as _pynput_kb
-        import pyperclip
+        if PLATFORM == "Windows":
+            import pyperclip
         HAS_PYNPUT = True
         PTT_KEYS_WIN = {
             "right_ctrl":  _pynput_kb.Key.ctrl_r,
@@ -237,6 +254,68 @@ def _do_paste(text: str) -> bool:
                     except Exception:
                         pass
 
+            elif PLATFORM == "Linux":
+                # Linux: detect X11 vs Wayland and use appropriate tools
+                saved_clip = None
+
+                if _LINUX_SESSION == "wayland":
+                    # Wayland: wl-copy / wl-paste / wtype (or ydotool)
+                    try:
+                        r = subprocess.run(["wl-paste", "--no-newline"],
+                                           capture_output=True, timeout=2)
+                        if r.returncode == 0:
+                            saved_clip = r.stdout
+                    except Exception:
+                        pass
+
+                    subprocess.run(["wl-copy", "--"],
+                                   input=text.encode("utf-8"), check=True, timeout=5)
+                    time.sleep(0.08)
+
+                    # Try wtype first (simulates key events on Wayland)
+                    try:
+                        subprocess.run(["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"],
+                                       check=True, timeout=5)
+                    except FileNotFoundError:
+                        # Fallback to ydotool (needs ydotoold running)
+                        try:
+                            subprocess.run(["ydotool", "key", "29:1", "47:1", "47:0", "29:0"],
+                                           check=True, timeout=5)
+                        except FileNotFoundError:
+                            # Last resort: xdotool via XWayland
+                            subprocess.run(["xdotool", "key", "ctrl+v"],
+                                           check=True, timeout=5)
+
+                    if saved_clip is not None:
+                        time.sleep(0.3)
+                        try:
+                            subprocess.run(["wl-copy", "--"],
+                                           input=saved_clip, check=False, timeout=2)
+                        except Exception:
+                            pass
+                else:
+                    # X11: xclip / xdotool
+                    try:
+                        r = subprocess.run(["xclip", "-selection", "clipboard", "-o"],
+                                           capture_output=True, timeout=2)
+                        if r.returncode == 0:
+                            saved_clip = r.stdout
+                    except Exception:
+                        pass
+
+                    subprocess.run(["xclip", "-selection", "clipboard"],
+                                   input=text.encode("utf-8"), check=True, timeout=5)
+                    time.sleep(0.08)
+                    subprocess.run(["xdotool", "key", "ctrl+v"], check=True, timeout=5)
+
+                    if saved_clip is not None:
+                        time.sleep(0.3)
+                        try:
+                            subprocess.run(["xclip", "-selection", "clipboard"],
+                                           input=saved_clip, check=False, timeout=2)
+                        except Exception:
+                            pass
+
             elif PLATFORM == "Windows":
                 import pyperclip
                 from pynput.keyboard import Controller as _KBC, Key as _Key
@@ -294,7 +373,7 @@ class Core:
         self._tap_ready = threading.Event()
         self._tap_ok    = False
         self._recording = False
-        self.ptt_key    = "fn" if PLATFORM == "Darwin" else "right_ctrl"
+        self.ptt_key    = "fn" if PLATFORM == "Darwin" else "right_ctrl"  # Linux & Windows use right_ctrl
         self._capture_mode = False
 
     def _lang_name(self):
@@ -624,6 +703,28 @@ class Core:
         if PLATFORM == "Windows" and not HAS_PYNPUT:
             emit({"type": "error", "msg": "pynput / pyperclip not installed"}); return
 
+        if PLATFORM == "Linux" and not HAS_PYNPUT:
+            emit({"type": "error", "msg": "pynput not installed"}); return
+
+        if PLATFORM == "Linux":
+            # Check clipboard/paste tools are available
+            missing = []
+            if _LINUX_SESSION == "wayland":
+                for cmd in ["wl-copy", "wl-paste"]:
+                    if not shutil.which(cmd):
+                        missing.append(cmd)
+                if not (shutil.which("wtype") or shutil.which("ydotool") or shutil.which("xdotool")):
+                    missing.append("wtype (or ydotool or xdotool)")
+            else:
+                if not shutil.which("xclip"):
+                    missing.append("xclip")
+                if not shutil.which("xdotool"):
+                    missing.append("xdotool")
+            if missing:
+                emit({"type": "error",
+                      "msg": f"Missing tools: {', '.join(missing)}. Run the install script or install them manually."})
+                return
+
         # Instance lock — prevent double-paste from two running daemons
         if not _acquire_instance_lock():
             emit({"type": "error",
@@ -653,7 +754,7 @@ class Core:
         self._tap_ready.wait(timeout=5.0)
         if not self._tap_ok:
             emit({"type": "error",
-                  "msg": "Key listener failed — run as administrator (Windows) or grant Accessibility (macOS)."})
+                  "msg": "Key listener failed — run as administrator (Windows), grant Accessibility (macOS), or check input group (Linux)."})
             return
 
         emit({"type": "ready", "lang": self.lang, "mode": self.mode,

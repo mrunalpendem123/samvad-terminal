@@ -1,6 +1,6 @@
 #!/bin/bash
 # Samvad Daemon — Textual UI + Python core
-# Hold [fn] anywhere → speak → release → auto-pastes at cursor
+# Hold [fn] (macOS) or [Right Ctrl] (Windows/Linux) → speak → release → auto-pastes at cursor
 set -e
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -28,23 +28,45 @@ _safe_load_env "$HOME/Desktop/sarvam/backend/.env"
 if ! command -v uv &> /dev/null; then
   echo "uv not found — installing..."
   curl -LsSf https://astral.sh/uv/install.sh | sh
-  export PATH="$HOME/.cargo/bin:$PATH"
+  export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 fi
 
+# ── Detect platform ───────────────────────────────────────────────────────────
+OS="$(uname -s)"
+
 # ── Launch overlay indicator in background (visible when terminal is minimized)
-uv run \
-  --python 3.11 \
-  --no-project \
-  --with "pyobjc-framework-Cocoa>=10" \
-  --with "pyobjc-framework-Quartz>=10" \
-  --with "sounddevice>=0.4" \
-  --with "numpy>=1.26" \
-  --with "requests>=2.28" \
-  python "$DIR/samvad-overlay.py" &
-OVERLAY_PID=$!
+OVERLAY_PID=""
+
+if [ "$OS" = "Darwin" ]; then
+  uv run \
+    --python 3.11 \
+    --no-project \
+    --with "pyobjc-framework-Cocoa>=10" \
+    --with "pyobjc-framework-Quartz>=10" \
+    --with "sounddevice>=0.4" \
+    --with "numpy>=1.26" \
+    --with "requests>=2.28" \
+    python "$DIR/samvad-overlay.py" &
+  OVERLAY_PID=$!
+
+elif [ "$OS" = "Linux" ] && [ -f "$DIR/samvad-overlay-linux.py" ]; then
+  # Overlay needs GTK3 — launch but don't fail if unavailable
+  uv run \
+    --python 3.11 \
+    --no-project \
+    --with "pycairo>=1.20" \
+    --with "PyGObject>=3.40" \
+    --with "sounddevice>=0.4" \
+    --with "numpy>=1.26" \
+    --with "requests>=2.28" \
+    python "$DIR/samvad-overlay-linux.py" &
+  OVERLAY_PID=$!
+fi
 
 # Kill overlay when the terminal UI exits
-trap "kill $OVERLAY_PID 2>/dev/null" EXIT
+if [ -n "$OVERLAY_PID" ]; then
+  trap "kill $OVERLAY_PID 2>/dev/null" EXIT
+fi
 
 # ── Launch terminal UI (main app) ────────────────────────────────────────────
 exec uv run \

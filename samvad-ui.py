@@ -1022,6 +1022,10 @@ class SamvadApp(App[None]):
                 "--with", "pyobjc-framework-Cocoa>=10",
                 "--with", "pyobjc-framework-Quartz>=10",
             ]
+        elif _OS == "Linux":
+            args += [
+                "--with", "pynput>=1.7",
+            ]
         elif _OS == "Windows":
             args += [
                 "--with", "pynput>=1.7",
