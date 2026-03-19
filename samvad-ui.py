@@ -1094,15 +1094,17 @@ class SamvadApp(App[None]):
             self._has_key = bool(msg.get("has_key"))
 
         elif t == "perm":
+            old_perm = getattr(self, "_perm", {"im": False, "ax": False})
             self._perm       = {"im": bool(msg.get("im")), "ax": bool(msg.get("ax"))}
             self._perm_stuck = bool(msg.get("stuck", False))
             self._perm_terminal = msg.get("terminal", "your terminal app")
             self._status     = "perm"
-            # Auto-advance selector to first ungranted permission
-            if self._perm["im"] and not self._perm["ax"]:
-                self._perm_sel = 1
-            elif not self._perm["im"]:
-                self._perm_sel = 0
+            # Only auto-advance selector when a permission state actually changes
+            if self._perm != old_perm:
+                if self._perm["im"] and not self._perm["ax"]:
+                    self._perm_sel = 1
+                elif not self._perm["im"]:
+                    self._perm_sel = 0
             self._refresh_ui()
             return
 
