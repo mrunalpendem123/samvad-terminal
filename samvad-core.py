@@ -749,48 +749,58 @@ class Core:
         # ── Start reading UI commands immediately (needed during perm phase) ──
         threading.Thread(target=self._cmd_thread, daemon=True).start()
 
-        # ── macOS: wait for permissions ──────────────────────────────────
+        # ── Detect terminal app name for permission instructions ────────
+        _term_app = os.environ.get("TERM_PROGRAM", "")
+        _term_names = {
+            "Apple_Terminal": "Terminal",
+            "iTerm.app": "iTerm",
+            "WarpTerminal": "Warp",
+            "vscode": "Visual Studio Code",
+            "alacritty": "Alacritty",
+            "kitty": "kitty",
+            "tmux": "tmux",
+        }
+        _term_display = _term_names.get(_term_app, _term_app or "your terminal app")
+
+        # ── macOS: request Accessibility prompt up front ──────────────
         if PLATFORM == "Darwin":
-            # Proactively request Accessibility so macOS shows the prompt.
-            # NOTE: Do NOT call CGRequestListenEventAccess() here — it
-            # contaminates the in-process cache and causes false positives
-            # for _has_im(). Input Monitoring is requested only when the
-            # user explicitly presses Enter on that row.
             _request_ax_prompt()
 
-            # Detect the user's terminal app for permission instructions
-            _term_app = os.environ.get("TERM_PROGRAM", "")
-            _term_names = {
-                "Apple_Terminal": "Terminal",
-                "iTerm.app": "iTerm",
-                "WarpTerminal": "Warp",
-                "vscode": "Visual Studio Code",
-                "alacritty": "Alacritty",
-                "kitty": "kitty",
-                "tmux": "tmux",
-            }
-            _term_display = _term_names.get(_term_app, _term_app or "your terminal app")
-
-            _perm_start = time.time()
-            while not (_has_ax() and _has_im()):
-                ax, im = _has_ax(), _has_im()
-                stuck = (time.time() - _perm_start) > 10
-                emit({"type": "perm", "im": im, "ax": ax, "stuck": stuck,
-                      "terminal": _term_display})
-                time.sleep(1)
-            emit({"type": "perm", "im": True, "ax": True, "stuck": False})
-
-        # ── Start key tap ────────────────────────────────────────────────
+        # ── Start key tap (retry loop for macOS permissions) ──────────
         if PLATFORM == "Darwin":
-            threading.Thread(target=self._tap_thread_macos, daemon=True).start()
+            # Try to start the tap. If it fails (permissions not granted),
+            # show permission instructions and keep retrying every 2s.
+            _perm_start = time.time()
+            while True:
+                self._tap_ok = False
+                self._tap_ready = threading.Event()
+                t = threading.Thread(target=self._tap_thread_macos, daemon=True)
+                t.start()
+                self._tap_ready.wait(timeout=5.0)
+                if self._tap_ok:
+                    # Tap succeeded → Input Monitoring is granted.
+                    # Now wait for Accessibility if not yet granted.
+                    while not _has_ax():
+                        stuck = (time.time() - _perm_start) > 10
+                        emit({"type": "perm", "im": True, "ax": False, "stuck": stuck,
+                              "terminal": _term_display})
+                        time.sleep(1)
+                    break
+                # Tap failed — show permission screen and retry
+                ax = _has_ax()
+                stuck = (time.time() - _perm_start) > 10
+                emit({"type": "perm", "im": False, "ax": ax, "stuck": stuck,
+                      "terminal": _term_display})
+                time.sleep(2)
+            # All permissions granted
+            emit({"type": "perm", "im": True, "ax": True, "stuck": False})
         else:
             threading.Thread(target=self._tap_thread_windows, daemon=True).start()
-
-        self._tap_ready.wait(timeout=5.0)
-        if not self._tap_ok:
-            emit({"type": "error",
-                  "msg": "Key listener failed — run as administrator (Windows), grant Accessibility (macOS), or check input group (Linux)."})
-            return
+            self._tap_ready.wait(timeout=5.0)
+            if not self._tap_ok:
+                emit({"type": "error",
+                      "msg": "Key listener failed — run as administrator (Windows) or check input group (Linux)."})
+                return
 
         emit({"type": "ready", "lang": self.lang, "mode": self.mode,
               "has_key": bool(self.key),
