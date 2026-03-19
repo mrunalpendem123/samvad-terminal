@@ -78,24 +78,11 @@ if PLATFORM == "Darwin":
     def _request_ax_prompt():
         """Trigger macOS Accessibility prompt so the app appears in the list."""
         try:
-            cf = ctypes.cdll.LoadLibrary(
-                "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
-            cf.CFStringCreateWithCString.restype = ctypes.c_void_p
-            cf.CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
-            cf.CFDictionaryCreate.restype = ctypes.c_void_p
-            cf.CFDictionaryCreate.argtypes = [
-                ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
-                ctypes.POINTER(ctypes.c_void_p), ctypes.c_long,
-                ctypes.c_void_p, ctypes.c_void_p]
-            cf.CFRelease.argtypes = [ctypes.c_void_p]
-            kCFBooleanTrue = ctypes.c_void_p.in_dll(cf, "kCFBooleanTrue")
-            k = cf.CFStringCreateWithCString(None, b"AXTrustedCheckOptionPrompt", 0x08000100)
-            ks = (ctypes.c_void_p * 1)(k)
-            vs = (ctypes.c_void_p * 1)(kCFBooleanTrue.value)
-            o = cf.CFDictionaryCreate(None, ks, vs, 1, None, None)
-            _ax.AXIsProcessTrustedWithOptions(o)
-            cf.CFRelease(o)
-            cf.CFRelease(k)
+            subprocess.Popen([
+                sys.executable, "-c",
+                "from ApplicationServices import AXIsProcessTrustedWithOptions;"
+                "AXIsProcessTrustedWithOptions({'AXTrustedCheckOptionPrompt': True})"
+            ])
         except Exception:
             pass
 
