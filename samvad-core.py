@@ -756,11 +756,25 @@ class Core:
             _cg.CGRequestListenEventAccess()
             _request_ax_prompt()
 
+            # Detect the user's terminal app for permission instructions
+            _term_app = os.environ.get("TERM_PROGRAM", "")
+            _term_names = {
+                "Apple_Terminal": "Terminal",
+                "iTerm.app": "iTerm",
+                "WarpTerminal": "Warp",
+                "vscode": "Visual Studio Code",
+                "alacritty": "Alacritty",
+                "kitty": "kitty",
+                "tmux": "tmux",
+            }
+            _term_display = _term_names.get(_term_app, _term_app or "your terminal app")
+
             _perm_start = time.time()
             while not (_has_ax() and _has_im()):
                 ax, im = _has_ax(), _has_im()
                 stuck = (time.time() - _perm_start) > 10
-                emit({"type": "perm", "im": im, "ax": ax, "stuck": stuck})
+                emit({"type": "perm", "im": im, "ax": ax, "stuck": stuck,
+                      "terminal": _term_display})
                 time.sleep(1)
             emit({"type": "perm", "im": True, "ax": True, "stuck": False})
 

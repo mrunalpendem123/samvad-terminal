@@ -343,7 +343,7 @@ WaveformWidget {{
 #perm-panel {{
     border: round {GOLD};
     padding: 1 3;
-    width: 60;
+    width: 64;
     max-width: 95%;
     height: auto;
 }}
@@ -830,14 +830,19 @@ class SamvadApp(App[None]):
                     f"[{GREEN}]  ✓ All permissions granted — starting…[/]"
                 )
             elif stuck:
+                term = getattr(self, "_perm_terminal", "your terminal app")
                 self.query_one("#perm-instr", Static).update(
-                    f"[{GOLD}]  Still waiting — press Enter or A to open settings[/]\n"
-                    f"  [{DIM}]Toggle the switch for Samvad in each settings pane[/]\n"
-                    f"  [{DIM}]If already granted, try quitting ([/{DIM}][{TEAL}]Ctrl+C[/][{DIM}]) and re-running [{TEAL}]samvad[/]"
+                    f"[{GOLD}]  Press Enter or A to open settings, then:[/]\n"
+                    f"  [{TEAL}]1.[/] Click [{TEAL}]+[/] at the bottom of the list\n"
+                    f"  [{TEAL}]2.[/] Find and add [{TEAL}]{term}[/]\n"
+                    f"  [{TEAL}]3.[/] Toggle its switch [{TEAL}]ON[/]\n"
+                    f"  [{DIM}]Samvad will detect the change automatically[/]"
                 )
             else:
+                term = getattr(self, "_perm_terminal", "your terminal app")
                 self.query_one("#perm-instr", Static).update(
-                    f"[{DIM}]  Checking automatically…[/]"
+                    f"[{DIM}]  Checking automatically…[/]\n"
+                    f"  [{DIM}]Press Enter to open settings → click + → add {term}[/]"
                 )
         except Exception:
             pass
@@ -971,10 +976,13 @@ class SamvadApp(App[None]):
         self._send({"cmd": "request_perm", "perm": key})
         # Show feedback that we opened settings
         labels = {"im": "Input Monitoring", "ax": "Accessibility"}
+        term = getattr(self, "_perm_terminal", "your terminal app")
         try:
             self.query_one("#perm-instr", Static).update(
-                f"[{GOLD}]  Opening {labels[key]} settings…[/]\n"
-                f"  [{DIM}]Toggle the switch for this app, then come back here[/]"
+                f"[{GOLD}]  Opened {labels[key]} settings[/]\n"
+                f"  [{TEAL}]1.[/] Click [{TEAL}]+[/] at the bottom of the list\n"
+                f"  [{TEAL}]2.[/] Find and add [{TEAL}]{term}[/]\n"
+                f"  [{TEAL}]3.[/] Toggle its switch [{TEAL}]ON[/]"
             )
         except Exception:
             pass
@@ -984,10 +992,14 @@ class SamvadApp(App[None]):
         if self._status != "perm":
             return
         self._send({"cmd": "request_perm", "perm": "all"})
+        term = getattr(self, "_perm_terminal", "your terminal app")
         try:
             self.query_one("#perm-instr", Static).update(
-                f"[{GOLD}]  Opening permission settings…[/]\n"
-                f"  [{DIM}]Toggle the switch for this app in each window, then come back here[/]"
+                f"[{GOLD}]  Opened both settings panes[/]\n"
+                f"  [{TEAL}]In each pane:[/]\n"
+                f"  [{TEAL}]1.[/] Click [{TEAL}]+[/] at the bottom of the list\n"
+                f"  [{TEAL}]2.[/] Find and add [{TEAL}]{term}[/]\n"
+                f"  [{TEAL}]3.[/] Toggle its switch [{TEAL}]ON[/]"
             )
         except Exception:
             pass
@@ -1084,6 +1096,7 @@ class SamvadApp(App[None]):
         elif t == "perm":
             self._perm       = {"im": bool(msg.get("im")), "ax": bool(msg.get("ax"))}
             self._perm_stuck = bool(msg.get("stuck", False))
+            self._perm_terminal = msg.get("terminal", "your terminal app")
             self._status     = "perm"
             # Auto-advance selector to first ungranted permission
             if self._perm["im"] and not self._perm["ax"]:
