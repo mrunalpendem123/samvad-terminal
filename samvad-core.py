@@ -678,17 +678,19 @@ class Core:
                     self._quit.set()
                 elif cmd.get("cmd") == "request_perm":
                     perm = cmd.get("perm", "")
-                    if perm == "im" and PLATFORM == "Darwin":
-                        subprocess.Popen([
-                            "open",
-                            "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
-                        ])
-                        _cg.CGRequestListenEventAccess()
-                    elif perm == "ax" and PLATFORM == "Darwin":
-                        subprocess.Popen([
-                            "open",
-                            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-                        ])
+                    targets = [perm] if perm != "all" else ["im", "ax"]
+                    for p in targets:
+                        if p == "im" and PLATFORM == "Darwin":
+                            subprocess.Popen([
+                                "open",
+                                "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+                            ])
+                            _cg.CGRequestListenEventAccess()
+                        elif p == "ax" and PLATFORM == "Darwin":
+                            subprocess.Popen([
+                                "open",
+                                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+                            ])
             except Exception:
                 pass
 
@@ -740,9 +742,9 @@ class Core:
             _perm_start = time.time()
             while not (_has_ax() and _has_im()):
                 ax, im = _has_ax(), _has_im()
-                stuck = (time.time() - _perm_start) > 20
+                stuck = (time.time() - _perm_start) > 10
                 emit({"type": "perm", "im": im, "ax": ax, "stuck": stuck})
-                time.sleep(2)
+                time.sleep(1)
             emit({"type": "perm", "im": True, "ax": True, "stuck": False})
 
         # ── Start key tap ────────────────────────────────────────────────

@@ -410,6 +410,7 @@ class SamvadApp(App[None]):
         Binding("l",       "cycle_lang",       show=False),
         Binding("m",       "cycle_mode",       show=False),
         Binding("escape",  "back",             show=False),
+        Binding("a",       "grant_all_perms",  show=False),
         Binding("up",      "settings_up",      show=False, priority=True),
         Binding("down",    "settings_down",    show=False, priority=True),
         Binding("enter",   "settings_select",  show=False, priority=True),
@@ -558,7 +559,7 @@ class SamvadApp(App[None]):
                     yield Static("", id="perm-im")
                     yield Static("", id="perm-ax")
                     yield Static(
-                        f"\n  [{DIM}]↑↓ select  ·  Enter = open grant dialog[/]",
+                        f"\n  [{DIM}]↑↓ select  ·  Enter = open setting  ·  A = grant all[/]",
                         id="perm-keys",
                     )
                 yield Static("", id="perm-instr")
@@ -700,7 +701,7 @@ class SamvadApp(App[None]):
         # Footer
         try:
             if status == "perm":
-                txt = f"[{TEAL}]↑↓[/] Select permission   [{TEAL}]Enter[/] Grant   [{TEAL}]Ctrl+C[/] Quit"
+                txt = f"[{TEAL}]↑↓[/] Select   [{TEAL}]Enter[/] Open setting   [{TEAL}]A[/] Grant all   [{TEAL}]Ctrl+C[/] Quit"
             elif view == "settings":
                 txt = f"[{TEAL}]↑↓[/] Navigate   [{TEAL}]Enter[/] Select   [{TEAL}]Esc[/] Close"
             elif view == "history":
@@ -810,11 +811,11 @@ class SamvadApp(App[None]):
         for i, (wid, granted, label) in enumerate(perms):
             is_sel = (i == self._perm_sel)
             if granted:
-                line = f"  [{GREEN}]  [✓] {label}[/]"
+                line = f"  [{GREEN}]  ✓  {label}[/]  [{DIM}]granted[/]"
             elif is_sel:
-                line = f"  [bold {TEAL}]▶ [ ] {label}[/]  [{DIM}]← press Enter[/]"
+                line = f"  [bold {TEAL}]▶ ○  {label}[/]  [{GOLD}]← Enter to open settings[/]"
             else:
-                line = f"  [{MUTED}]  [ ] {label}[/]"
+                line = f"  [{MUTED}]  ○  {label}[/]  [{DIM}]not granted[/]"
             try:
                 self.query_one(f"#{wid}", Static).update(line)
             except Exception:
@@ -830,8 +831,9 @@ class SamvadApp(App[None]):
                 )
             elif stuck:
                 self.query_one("#perm-instr", Static).update(
-                    f"[{GOLD}]  Permissions granted? Quit and re-run:[/]\n"
-                    f"  [{TEAL}]samvad[/]"
+                    f"[{GOLD}]  Still waiting — press Enter or A to open settings[/]\n"
+                    f"  [{DIM}]Toggle the switch for Samvad in each settings pane[/]\n"
+                    f"  [{DIM}]If already granted, try quitting ([/{DIM}][{TEAL}]Ctrl+C[/][{DIM}]) and re-running [{TEAL}]samvad[/]"
                 )
             else:
                 self.query_one("#perm-instr", Static).update(
@@ -967,6 +969,28 @@ class SamvadApp(App[None]):
         perm_keys = ["im", "ax"]
         key = perm_keys[self._perm_sel]
         self._send({"cmd": "request_perm", "perm": key})
+        # Show feedback that we opened settings
+        labels = {"im": "Input Monitoring", "ax": "Accessibility"}
+        try:
+            self.query_one("#perm-instr", Static).update(
+                f"[{GOLD}]  Opening {labels[key]} settings…[/]\n"
+                f"  [{DIM}]Toggle the switch for this app, then come back here[/]"
+            )
+        except Exception:
+            pass
+
+    def action_grant_all_perms(self) -> None:
+        """Press 'a' to open both permission dialogs at once."""
+        if self._status != "perm":
+            return
+        self._send({"cmd": "request_perm", "perm": "all"})
+        try:
+            self.query_one("#perm-instr", Static).update(
+                f"[{GOLD}]  Opening permission settings…[/]\n"
+                f"  [{DIM}]Toggle the switch for this app in each window, then come back here[/]"
+            )
+        except Exception:
+            pass
 
     def action_settings_up(self) -> None:
         if self._status == "perm":
