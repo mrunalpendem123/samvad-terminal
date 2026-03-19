@@ -75,6 +75,30 @@ if PLATFORM == "Darwin":
     def _has_ax():
         return bool(_ax.AXIsProcessTrusted())
 
+    def _request_ax_prompt():
+        """Trigger macOS Accessibility prompt so the app appears in the list."""
+        try:
+            cf = ctypes.cdll.LoadLibrary(
+                "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+            cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+            cf.CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+            cf.CFDictionaryCreate.restype = ctypes.c_void_p
+            cf.CFDictionaryCreate.argtypes = [
+                ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
+                ctypes.POINTER(ctypes.c_void_p), ctypes.c_long,
+                ctypes.c_void_p, ctypes.c_void_p]
+            cf.CFRelease.argtypes = [ctypes.c_void_p]
+            kCFBooleanTrue = ctypes.c_void_p.in_dll(cf, "kCFBooleanTrue")
+            k = cf.CFStringCreateWithCString(None, b"AXTrustedCheckOptionPrompt", 0x08000100)
+            ks = (ctypes.c_void_p * 1)(k)
+            vs = (ctypes.c_void_p * 1)(kCFBooleanTrue.value)
+            o = cf.CFDictionaryCreate(None, ks, vs, 1, None, None)
+            _ax.AXIsProcessTrustedWithOptions(o)
+            cf.CFRelease(o)
+            cf.CFRelease(k)
+        except Exception:
+            pass
+
     def _has_im():
         # CGPreflightListenEventAccess caches its result in-process on macOS 13+.
         # Spawn a tiny subprocess to get a fresh read from the TCC database.
@@ -691,6 +715,7 @@ class Core:
                                 "open",
                                 "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
                             ])
+                            _request_ax_prompt()
             except Exception:
                 pass
 
@@ -739,6 +764,11 @@ class Core:
 
         # ── macOS: wait for permissions ──────────────────────────────────
         if PLATFORM == "Darwin":
+            # Proactively request both permissions so macOS adds the app
+            # to the Input Monitoring / Accessibility lists immediately.
+            _cg.CGRequestListenEventAccess()
+            _request_ax_prompt()
+
             _perm_start = time.time()
             while not (_has_ax() and _has_im()):
                 ax, im = _has_ax(), _has_im()
