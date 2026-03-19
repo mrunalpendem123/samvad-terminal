@@ -751,9 +751,11 @@ class Core:
 
         # ── macOS: wait for permissions ──────────────────────────────────
         if PLATFORM == "Darwin":
-            # Proactively request both permissions so macOS adds the app
-            # to the Input Monitoring / Accessibility lists immediately.
-            _cg.CGRequestListenEventAccess()
+            # Proactively request Accessibility so macOS shows the prompt.
+            # NOTE: Do NOT call CGRequestListenEventAccess() here — it
+            # contaminates the in-process cache and causes false positives
+            # for _has_im(). Input Monitoring is requested only when the
+            # user explicitly presses Enter on that row.
             _request_ax_prompt()
 
             # Detect the user's terminal app for permission instructions
