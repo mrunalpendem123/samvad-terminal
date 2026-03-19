@@ -88,17 +88,71 @@ if PLATFORM == "Darwin":
         except Exception:
             pass
 
-    def _request_im_prompt():
-        """Trigger macOS Input Monitoring prompt so Terminal appears in the list."""
+    def _request_ax_dialog():
+        """Show native dialog + open settings for Accessibility."""
+        _term_app = os.environ.get("TERM_PROGRAM", "")
+        _term_names = {
+            "Apple_Terminal": "Terminal",
+            "iTerm.app": "iTerm",
+            "WarpTerminal": "Warp",
+            "vscode": "Visual Studio Code",
+        }
+        term = _term_names.get(_term_app, "Terminal")
         try:
             subprocess.Popen([
-                sys.executable, "-c",
-                "import ctypes, time;"
-                "cg=ctypes.cdll.LoadLibrary("
-                "'/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics');"
-                "cg.CGRequestListenEventAccess.restype=ctypes.c_bool;"
-                "cg.CGRequestListenEventAccess();"
-                "time.sleep(30)"
+                "open",
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            ])
+            subprocess.Popen([
+                "osascript", "-e",
+                f'display dialog "To grant Accessibility:\\n\\n'
+                f'1. In the Settings window, find {term}\\n'
+                f'2. Toggle its switch ON\\n\\n'
+                f'If {term} is not in the list, click + and add it." '
+                f'with title "Samvad — Permission Needed" '
+                f'buttons {{"OK"}} default button "OK" '
+                f'with icon caution'
+            ])
+        except Exception:
+            pass
+
+    def _request_im_prompt():
+        """Show native dialog + open settings for Input Monitoring."""
+        _term_app = os.environ.get("TERM_PROGRAM", "")
+        _term_names = {
+            "Apple_Terminal": "Terminal",
+            "iTerm.app": "iTerm",
+            "WarpTerminal": "Warp",
+            "vscode": "Visual Studio Code",
+        }
+        term = _term_names.get(_term_app, "Terminal")
+        # Determine the .app path to reveal in Finder
+        _app_paths = {
+            "Terminal": "/System/Applications/Utilities/Terminal.app",
+            "iTerm": "/Applications/iTerm.app",
+            "Warp": "/Applications/Warp.app",
+            "Visual Studio Code": "/Applications/Visual Studio Code.app",
+        }
+        app_path = _app_paths.get(term, "/System/Applications/Utilities/Terminal.app")
+        try:
+            # Open the Input Monitoring settings pane
+            subprocess.Popen([
+                "open",
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+            ])
+            # Reveal the terminal app in Finder so user can drag it
+            subprocess.Popen(["open", "-R", app_path])
+            # Show a native macOS dialog with instructions
+            subprocess.Popen([
+                "osascript", "-e",
+                f'display dialog "To grant Input Monitoring:\\n\\n'
+                f'1. In the Settings window, click the + button\\n'
+                f'2. Find {term} (Finder window is open)\\n'
+                f'3. Click Open, then toggle the switch ON\\n\\n'
+                f'Or drag {term} from the Finder window into the settings list." '
+                f'with title "Samvad — Permission Needed" '
+                f'buttons {{"OK"}} default button "OK" '
+                f'with icon caution'
             ])
         except Exception:
             pass
@@ -709,17 +763,9 @@ class Core:
                     targets = [perm] if perm != "all" else ["im", "ax"]
                     for p in targets:
                         if p == "im" and PLATFORM == "Darwin":
-                            subprocess.Popen([
-                                "open",
-                                "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
-                            ])
                             _request_im_prompt()
                         elif p == "ax" and PLATFORM == "Darwin":
-                            subprocess.Popen([
-                                "open",
-                                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-                            ])
-                            _request_ax_prompt()
+                            _request_ax_dialog()
             except Exception:
                 pass
 
@@ -781,8 +827,7 @@ class Core:
 
         # ── macOS: trigger permission prompts so Terminal appears in lists
         if PLATFORM == "Darwin":
-            _request_im_prompt()
-            _request_ax_prompt()
+            _request_ax_prompt()  # programmatic prompt for Accessibility
 
         # ── Start key tap (retry loop for macOS permissions) ──────────
         if PLATFORM == "Darwin":
