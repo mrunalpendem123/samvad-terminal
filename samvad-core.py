@@ -76,12 +76,29 @@ if PLATFORM == "Darwin":
         return bool(_ax.AXIsProcessTrusted())
 
     def _request_ax_prompt():
-        """Trigger macOS Accessibility prompt so the app appears in the list."""
+        """Trigger macOS Accessibility prompt so Terminal appears in the list."""
         try:
             subprocess.Popen([
                 sys.executable, "-c",
+                "import time;"
                 "from ApplicationServices import AXIsProcessTrustedWithOptions;"
-                "AXIsProcessTrustedWithOptions({'AXTrustedCheckOptionPrompt': True})"
+                "AXIsProcessTrustedWithOptions({'AXTrustedCheckOptionPrompt': True});"
+                "time.sleep(30)"
+            ])
+        except Exception:
+            pass
+
+    def _request_im_prompt():
+        """Trigger macOS Input Monitoring prompt so Terminal appears in the list."""
+        try:
+            subprocess.Popen([
+                sys.executable, "-c",
+                "import ctypes, time;"
+                "cg=ctypes.cdll.LoadLibrary("
+                "'/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics');"
+                "cg.CGRequestListenEventAccess.restype=ctypes.c_bool;"
+                "cg.CGRequestListenEventAccess();"
+                "time.sleep(30)"
             ])
         except Exception:
             pass
@@ -696,7 +713,7 @@ class Core:
                                 "open",
                                 "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
                             ])
-                            _cg.CGRequestListenEventAccess()
+                            _request_im_prompt()
                         elif p == "ax" and PLATFORM == "Darwin":
                             subprocess.Popen([
                                 "open",
@@ -762,8 +779,9 @@ class Core:
         }
         _term_display = _term_names.get(_term_app, _term_app or "your terminal app")
 
-        # ── macOS: request Accessibility prompt up front ──────────────
+        # ── macOS: trigger permission prompts so Terminal appears in lists
         if PLATFORM == "Darwin":
+            _request_im_prompt()
             _request_ax_prompt()
 
         # ── Start key tap (retry loop for macOS permissions) ──────────
