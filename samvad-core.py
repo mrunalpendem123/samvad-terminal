@@ -73,7 +73,18 @@ if PLATFORM == "Darwin":
     _cg.CGRequestListenEventAccess.restype     = ctypes.c_bool
 
     def _has_ax():
-        return bool(_ax.AXIsProcessTrusted())
+        # AXIsProcessTrusted can cache in-process. Use a subprocess for a fresh check.
+        try:
+            r = subprocess.run(
+                [sys.executable, "-c",
+                 "import ctypes; ax=ctypes.cdll.LoadLibrary("
+                 "'/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices');"
+                 "ax.AXIsProcessTrusted.restype=ctypes.c_bool;"
+                 "print(int(ax.AXIsProcessTrusted()))"],
+                capture_output=True, text=True, timeout=3)
+            return r.stdout.strip() == "1"
+        except Exception:
+            return bool(_ax.AXIsProcessTrusted())
 
     def _request_ax_prompt():
         """Trigger macOS Accessibility prompt so Terminal appears in the list."""
